@@ -60,11 +60,13 @@ python terrain/build_crater_db.py  # generates data/crater_db.sqlite
 ```
 
 Expected result after all four run successfully:
-data/dem/south_pole_20m.tiff (raw input, downloaded manually — not in git)
-data/processed/slope.tif (generated)
-data/processed/roughness.tif (generated)
-data/crater_db.sqlite (generated)
 
+```
+data/dem/south_pole_20m.tiff        (raw input, downloaded manually — not in git)
+data/processed/slope.tif            (generated)
+data/processed/roughness.tif        (generated)
+data/crater_db.sqlite               (generated)
+```
 
 **Note:** the large `.tif`/`.tiff` files and raw `.csv` are excluded
 from this repo via `.gitignore` (GitHub's file size limits). You must
@@ -99,14 +101,17 @@ too strict for the region covered).
 ---
 
 ## File Structure
+
+```
 terrain/
-├── dem_loader.py # Loads the DEM GeoTIFF, returns elevation array + metadata
-├── slope.py # Computes slope.tif from the DEM
-├── roughness.py # Computes roughness.tif from the DEM
-└── build_crater_db.py # Filters Robbins catalog → crater_db.sqlite
+├── dem_loader.py       # Loads the DEM GeoTIFF, returns elevation array + metadata
+├── slope.py            # Computes slope.tif from the DEM
+├── roughness.py        # Computes roughness.tif from the DEM
+└── build_crater_db.py  # Filters Robbins catalog → crater_db.sqlite
 
 data/
-├── dem/ # Raw DEM tile (not tracked in git)
-├── raw/ # Raw crater CSV (not tracked in git)
-├── processed/ # Generated slope.tif, roughness.tif (not tracked in git)
-└── crater_db.sqlite # Generated crater DB (tracked in git — small file)
+├── dem/                # Raw DEM tile (not tracked in git)
+├── raw/                # Raw crater CSV (not tracked in git)
+├── processed/          # Generated slope.tif, roughness.tif (not tracked in git)
+└── crater_db.sqlite    # Generated crater DB (tracked in git — small file)
+```
