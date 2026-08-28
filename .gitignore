@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+data/dem/*.tif
+data/dem/*.tiff
+data/raw/*.csv
+data/processed/*.tif
+!data/dem/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
