@@ -20,8 +20,12 @@ def load_craters(db_path=None):
                 # base_dir = M2/localization/  ->  .parent = M2/  ->  .parent.parent = sih/
         # TERRAINDATA lives at sih/TERRAINDATA/, a SIBLING of M2, not of localization/.
         stub_path = base_dir / "stub_data" / "crater_db.sqlite"
-        local_path = base_dir / "data" / "crater_db.sqlite"
-        upstream_path = base_dir.parent.parent / "TERRAINDATA" / "data" / "crater_db.sqlite"
+        
+        # Look in the root data folder: Code/data/crater_db.sqlite
+        local_path = base_dir.parent / "data" / "crater_db.sqlite"
+        
+        # Look in the terrain folder: Code/terrain/crater_db.sqlite
+        upstream_path = base_dir.parent / "terrain" / "crater_db.sqlite"
 
         if os.path.exists(upstream_path):
             db_path = str(upstream_path)
