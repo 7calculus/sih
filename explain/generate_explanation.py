@@ -1,6 +1,27 @@
 from .path_metrics import compute_path_metrics
 
 
+def _metric_reason(label, chosen_value, rejected_value, lower_is_better=True):
+    difference = rejected_value - chosen_value
+    magnitude = abs(difference)
+
+    if difference == 0:
+        return (
+            f"{label} was equal "
+            f"(chosen {chosen_value:.2f}, rejected {rejected_value:.2f})"
+        )
+
+    chosen_is_better = difference > 0 if lower_is_better else difference < 0
+    direction = "lower" if difference > 0 else "higher"
+    preference = "favored" if chosen_is_better else "penalized"
+
+    return (
+        f"{label} {direction} by {magnitude:.2f} "
+        f"(chosen {chosen_value:.2f}, rejected {rejected_value:.2f}), "
+        f"which {preference} Path A"
+    )
+
+
 def generate_contrastive_explanation(
     path_a,
     path_b,
@@ -15,50 +36,23 @@ def generate_contrastive_explanation(
     metrics_a = compute_path_metrics(path_a, covariance_a)
     metrics_b = compute_path_metrics(path_b, covariance_b)
 
-    slip_difference = metrics_b["slip_risk"] - metrics_a["slip_risk"]
-    covariance_difference = (
-        metrics_b["crater_covariance"]
-        - metrics_a["crater_covariance"]
-    )
-    energy_difference = (
-        metrics_b["energy_proxy"]
-        - metrics_a["energy_proxy"]
-    )
-
-    reasons = []
-
-    if slip_difference > 0:
-        reasons.append(
-            f"Slip Risk {abs(slip_difference):.2f} lower"
-        )
-    elif slip_difference < 0:
-        reasons.append(
-            f"Slip Risk {abs(slip_difference):.2f} higher"
-        )
-    else:
-        reasons.append("Slip Risk was similar")
-
-    if covariance_difference > 0:
-        reasons.append(
-            f"Crater Covariance {abs(covariance_difference):.2f} safer"
-        )
-    elif covariance_difference < 0:
-        reasons.append(
-            f"Crater Covariance {abs(covariance_difference):.2f} higher"
-        )
-    else:
-        reasons.append("Crater Covariance was similar")
-
-    if energy_difference > 0:
-        reasons.append(
-            f"Energy Proxy {abs(energy_difference):.2f} lower"
-        )
-    elif energy_difference < 0:
-        reasons.append(
-            f"Energy Proxy {abs(energy_difference):.2f} higher"
-        )
-    else:
-        reasons.append("Energy Proxy was similar")
+    reasons = [
+        _metric_reason(
+            "Slip Risk",
+            metrics_a["slip_risk"],
+            metrics_b["slip_risk"],
+        ),
+        _metric_reason(
+            "Crater Covariance",
+            metrics_a["crater_covariance"],
+            metrics_b["crater_covariance"],
+        ),
+        _metric_reason(
+            "Energy Proxy",
+            metrics_a["energy_proxy"],
+            metrics_b["energy_proxy"],
+        ),
+    ]
 
     explanation = "Chose Path A over Path B because: " + ", ".join(reasons)
 

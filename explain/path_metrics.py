@@ -31,6 +31,20 @@ def read_path_values(path, raster_path):
     return values
 
 
+def _extract_covariance_matrix(localization):
+    """
+    Accept either a covariance matrix or an M2 localization payload.
+    """
+
+    if isinstance(localization, dict):
+        localization = localization.get("covariance")
+
+    if localization is None:
+        return None
+
+    return np.asarray(localization, dtype=float)
+
+
 def compute_path_metrics(path, covariance):
     """
     Compute the three metrics required by M6:
@@ -86,9 +100,9 @@ def compute_path_metrics(path, covariance):
     # Crater covariance exposure
     # --------------------------------------------------
 
-    covariance_array = np.asarray(covariance, dtype=float)
+    covariance_array = _extract_covariance_matrix(covariance)
 
-    if covariance_array.shape == (3, 3):
+    if covariance_array is not None and covariance_array.shape == (3, 3):
         crater_covariance = float(
             np.sqrt(
                 covariance_array[0, 0]
