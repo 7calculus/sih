@@ -15,19 +15,25 @@ from .coords import latlon_to_local_xy
 
 def load_craters(db_path=None):
     if db_path is None:
-        base_dir = Path(__file__).resolve().parent  # M2/localization/
+        base_dir = Path(__file__).resolve().parent  # Code/localization/
         
-                # base_dir = M2/localization/  ->  .parent = M2/  ->  .parent.parent = sih/
-        # TERRAINDATA lives at sih/TERRAINDATA/, a SIBLING of M2, not of localization/.
-        stub_path = base_dir / "stub_data" / "crater_db.sqlite"
+        # 1. Look in your dedicated crater_db folder: Code/crater_db/crater_db.sqlite (PRIORITY)
+        primary_path = base_dir.parent / "crater_db" / "crater_db.sqlite"
         
-        # Look in the root data folder: Code/data/crater_db.sqlite
+        # 2. Look in the root data folder: Code/data/crater_db.sqlite
         local_path = base_dir.parent / "data" / "crater_db.sqlite"
         
-        # Look in the terrain folder: Code/terrain/crater_db.sqlite
+        # 3. Look in the terrain folder: Code/terrain/crater_db.sqlite
         upstream_path = base_dir.parent / "terrain" / "crater_db.sqlite"
 
-        if os.path.exists(upstream_path):
+        # 4. Fallback stub
+        stub_path = base_dir / "stub_data" / "crater_db.sqlite"
+
+        # Check paths in order of priority
+        if os.path.exists(primary_path):
+            db_path = str(primary_path)
+            print(f"[crater_loader] Using primary DB: {db_path}")
+        elif os.path.exists(upstream_path):
             db_path = str(upstream_path)
             print(f"[crater_loader] Using M1's live upstream DB: {db_path}")
         elif os.path.exists(local_path):
@@ -41,6 +47,7 @@ def load_craters(db_path=None):
             raise FileNotFoundError(
                 f"Crater database not found.\n"
                 f"Tried:\n"
+                f"  - {primary_path}\n"
                 f"  - {upstream_path}\n"
                 f"  - {local_path}\n"
                 f"  - {stub_path}\n"
@@ -62,8 +69,7 @@ def load_craters(db_path=None):
     WHERE LAT_CIRC_IMG IS NOT NULL 
       AND LON_CIRC_IMG IS NOT NULL
     LIMIT 100
-""")
-
+    """)
 
     rows = cursor.fetchall()
     conn.close()

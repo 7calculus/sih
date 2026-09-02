@@ -11,3 +11,14 @@ data/processed/*.tif
 !data/dem/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+
+# Node modules and React build
+dashboard/node_modules/
+dashboard/dist/
+
+# Temporary simulation state
+localization/telemetry.json
+telemetry.json
+
+data/*.tif
+data/*.tiff
