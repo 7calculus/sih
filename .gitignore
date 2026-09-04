@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 
+# Data and Maps
 data/dem/*.tif
 data/dem/*.tiff
 data/raw/*.csv
@@ -11,6 +12,8 @@ data/processed/*.tif
 !data/dem/.gitkeep
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+data/*.tif
+data/*.tiff
 
 # Node modules and React build
 dashboard/node_modules/
@@ -19,6 +22,3 @@ dashboard/dist/
 # Temporary simulation state
 localization/telemetry.json
 telemetry.json
-
-data/*.tif
-data/*.tiff
