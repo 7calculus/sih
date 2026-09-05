@@ -1,0 +1,15 @@
+{
+  "scenario_name": "hero_demo_no_trn",
+  "description": "Hero demonstration with Terrain Relative Navigation disabled.",
+  "trn_enabled": false,
+  "start": {
+    "x": 145.6,
+    "y": -89.5
+  },
+  "goal": {
+    "x": 500.0,
+    "y": 480.0
+  },
+  "uncertainty": 2.5,
+  "expected_behavior": "Demonstrate degraded localization confidence and contrastive route reasoning without TRN."
+}

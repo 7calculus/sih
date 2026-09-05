@@ -1,0 +1,15 @@
+{
+  "scenario_name": "hero_demo_trn",
+  "description": "Hero demonstration with Terrain Relative Navigation enabled.",
+  "trn_enabled": true,
+  "start": {
+    "x": 145.6,
+    "y": -89.5
+  },
+  "goal": {
+    "x": 500.0,
+    "y": 480.0
+  },
+  "uncertainty": 2.5,
+  "expected_behavior": "Use localization confidence and terrain information to support a safer route decision."
+}

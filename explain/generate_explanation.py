@@ -11,7 +11,10 @@ def _metric_reason(label, chosen_value, rejected_value, lower_is_better=True):
             f"(chosen {chosen_value:.2f}, rejected {rejected_value:.2f})"
         )
 
-    chosen_is_better = difference > 0 if lower_is_better else difference < 0
+    chosen_is_better = (
+        difference > 0 if lower_is_better else difference < 0
+    )
+
     direction = "lower" if difference > 0 else "higher"
     preference = "favored" if chosen_is_better else "penalized"
 
@@ -25,16 +28,15 @@ def _metric_reason(label, chosen_value, rejected_value, lower_is_better=True):
 def generate_contrastive_explanation(
     path_a,
     path_b,
-    covariance_a,
-    covariance_b
+    current_pose
 ):
     """
-    Compare two candidate paths and explain why Path A
-    is preferred over Path B.
+    Compare two candidate paths using the current localization pose
+    and explain why Path A is preferred over Path B.
     """
 
-    metrics_a = compute_path_metrics(path_a, covariance_a)
-    metrics_b = compute_path_metrics(path_b, covariance_b)
+    metrics_a = compute_path_metrics(path_a, current_pose)
+    metrics_b = compute_path_metrics(path_b, current_pose)
 
     reasons = [
         _metric_reason(
@@ -54,7 +56,10 @@ def generate_contrastive_explanation(
         ),
     ]
 
-    explanation = "Chose Path A over Path B because: " + ", ".join(reasons)
+    explanation = (
+        "Chose Path A over Path B because: "
+        + ", ".join(reasons)
+    )
 
     return {
         "chosen_path": "A",
