@@ -26,15 +26,17 @@ def generate_contrastive_explanation(
     path_a,
     path_b,
     covariance_a,
-    covariance_b
+    covariance_b,
+    metrics_override_a=None,
+    metrics_override_b=None,
 ):
     """
     Compare two candidate paths and explain why Path A
     is preferred over Path B.
     """
 
-    metrics_a = compute_path_metrics(path_a, covariance_a)
-    metrics_b = compute_path_metrics(path_b, covariance_b)
+    metrics_a = metrics_override_a or compute_path_metrics(path_a, covariance_a)
+    metrics_b = metrics_override_b or compute_path_metrics(path_b, covariance_b)
 
     reasons = [
         _metric_reason(

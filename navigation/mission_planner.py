@@ -14,7 +14,7 @@ class MissionPlanner:
         self.max_safe_slope = 15.0
         self.height, self.width = self.slope_map.shape
 
-    def get_step_cost(self, x, y, uncertainty):
+    def get_step_cost(self, x, y, uncertainty, slope_weight=0.5, max_safe_slope=None):
         """Calculates the cost of stepping onto a specific pixel."""
         # Prevent out of bounds
         if x < 0 or x >= self.width or y < 0 or y >= self.height:
@@ -23,15 +23,16 @@ class MissionPlanner:
         slope = self.slope_map[y, x]
         
         # 1. Constraint Check: Walls and No-Data zones
-        if slope > self.max_safe_slope or np.isnan(slope):
+        slope_limit = self.max_safe_slope if max_safe_slope is None else max_safe_slope
+        if slope > slope_limit or np.isnan(slope):
             return float('inf')
             
         # 2. Base Cost + Hazard Cost
-        cost = 1.0 + (slope * 0.5)
+        cost = 1.0 + (slope * slope_weight)
         
         # 3. Apply Uncertainty Penalty (The core innovation)
         if uncertainty > 3.0: 
-            cost += (slope * 2.0) 
+            cost += (slope * slope_weight * 2.0)
             
         return cost
 
@@ -39,7 +40,8 @@ class MissionPlanner:
         """Euclidean distance heuristic for A*"""
         return math.hypot(a[0] - b[0], a[1] - b[1])
 
-    def plan_route(self, start_pos, goal_pos, uncertainty):
+    def plan_route(self, start_pos, goal_pos, uncertainty, slope_weight=0.5,
+                   max_safe_slope=None):
         """
         A* Pathfinding Algorithm.
         start_pos and goal_pos must be (x, y) tuples.
@@ -65,7 +67,11 @@ class MissionPlanner:
             for dx, dy in neighbors:
                 neighbor = (current[0] + dx, current[1] + dy)
                 
-                step_cost = self.get_step_cost(neighbor[0], neighbor[1], uncertainty)
+                step_cost = self.get_step_cost(
+                    neighbor[0], neighbor[1], uncertainty,
+                    slope_weight=slope_weight,
+                    max_safe_slope=max_safe_slope,
+                )
                 
                 # Diagonal movement costs slightly more (math.sqrt(2))
                 if dx != 0 and dy != 0 and step_cost != float('inf'):

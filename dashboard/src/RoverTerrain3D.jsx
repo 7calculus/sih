@@ -27,9 +27,10 @@ function closestIndex(arr, val) {
   return lo;
 }
 
-export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, mode }) {
+export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, mode, pathA = [], pathB = [], activePath = [], hazards = [], scanState = 'clear' }) {
   const mountRef = useRef(null);
   const sceneStateRef = useRef(null);
+  const lastPositionRef = useRef(position);
   const [status, setStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -51,8 +52,7 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.5;
+    controls.autoRotate = false;
     controls.minDistance = 5;
     controls.maxDistance = 5000;
 
@@ -84,10 +84,13 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
     const s = {
       scene, camera, renderer, controls,
       roverMesh: null, uncertaintyRing: null, trailLine: null,
+      routeA: null, routeB: null, activeRoute: null, hazardMeshes: [],
       xCoords: null, yCoords: null, elevation: null,
       sampleHeight: () => 0,
       targetPos: new THREE.Vector3(),
       currentPos: new THREE.Vector3(),
+      cameraTarget: new THREE.Vector3(),
+      heading: new THREE.Vector3(1, 0, 0),
       animId: null,
       ready: false,
     };
@@ -110,6 +113,9 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
 
       const geo = new THREE.PlaneGeometry(1, 1, cols - 1, rows - 1);
       const posAttr = geo.attributes.position;
+      const elevationMin = Math.min(...elevFlat);
+      const elevationMax = Math.max(...elevFlat);
+      const colorAttr = new Float32Array(elevFlat.length * 3);
       let vi = 0;
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
@@ -118,13 +124,19 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
           const h = (elevation[r][c] - elevMean) * VERTICAL_EXAGGERATION;
           // three.js is Y-up: elevation goes on Y, the plane itself spans world X/Z.
           posAttr.setXYZ(vi, worldX, h, worldY);
+          const normalized = (elevation[r][c] - elevationMin) / Math.max(elevationMax - elevationMin, 1);
+          const shade = 0.22 + normalized * 0.58;
+          colorAttr[vi * 3] = shade;
+          colorAttr[vi * 3 + 1] = shade * 0.96;
+          colorAttr[vi * 3 + 2] = shade * 0.88;
           vi++;
         }
       }
       posAttr.needsUpdate = true;
+      geo.setAttribute('color', new THREE.BufferAttribute(colorAttr, 3));
       geo.computeVertexNormals();
 
-      const mat = new THREE.MeshStandardMaterial({ color: 0x9a9a9a, flatShading: true, roughness: 1.0, metalness: 0.0 });
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1.0, metalness: 0.0 });
       const mesh = new THREE.Mesh(geo, mat);
       scene.add(mesh);
 
@@ -145,22 +157,50 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
       const centerX = (x_coords[0] + x_coords[cols - 1]) / 2;
       const centerY = (y_coords[0] + y_coords[rows - 1]) / 2;
 
-      camera.position.set(centerX + span * 0.35, span * 0.4, centerY + span * 0.35);
-      controls.target.set(centerX, 0, centerY);
+      const initialHeight = sampleHeight(position.x, position.y);
+      camera.position.set(position.x - 45, initialHeight + 24, position.y - 45);
+      controls.target.set(position.x + 35, initialHeight, position.y + 35);
       controls.update();
 
       // Rover marker - a small lander-like cone, easy to read against the terrain.
-      const markerSize = Math.max(span * 0.012, 2);
-      const roverGeo = new THREE.ConeGeometry(markerSize * 0.5, markerSize * 1.3, 8);
-      const roverMat = new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x0e7490, emissiveIntensity: 0.9 });
-      const roverMesh = new THREE.Mesh(roverGeo, roverMat);
-      scene.add(roverMesh);
-      s.roverMesh = roverMesh;
+      const markerSize = 6;
+      const roverGroup = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(7, 2.5, 10), new THREE.MeshStandardMaterial({ color: 0xd7dde5, metalness: 0.55, roughness: 0.6 }));
+      body.position.y = 3;
+      roverGroup.add(body);
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 5, 12), new THREE.MeshStandardMaterial({ color: 0x22d3ee, emissive: 0x075985, emissiveIntensity: 0.8 }));
+      mast.position.y = 6.5;
+      roverGroup.add(mast);
+      const wheelMat = new THREE.MeshStandardMaterial({ color: 0x202733, roughness: 0.9 });
+      for (const x of [-4.2, 4.2]) {
+        for (const z of [-3.2, 3.2]) {
+          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, 1.1, 16), wheelMat);
+          wheel.rotation.z = Math.PI / 2;
+          wheel.position.set(x, 1.8, z);
+          roverGroup.add(wheel);
+        }
+      }
+      scene.add(roverGroup);
+      s.roverMesh = roverGroup;
+
+      const routeLine = (points, color, dashed = false) => {
+        const geometry = new THREE.BufferGeometry().setFromPoints(points.map(([x, y]) => new THREE.Vector3(x, sampleHeight(x, y) + 1.2, y)));
+        const material = dashed
+          ? new THREE.LineDashedMaterial({ color, dashSize: 5, gapSize: 3, linewidth: 1 })
+          : new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        const line = new THREE.Line(geometry, material);
+        if (dashed) line.computeLineDistances();
+        scene.add(line);
+        return line;
+      };
+      s.routeA = routeLine(pathA, 0xa78bfa, true);
+      s.routeB = routeLine(pathB, 0xf97316, true);
+      s.activeRoute = routeLine(activePath, 0x22d3ee, false);
 
       // Uncertainty envelope - a flat ring lying on the terrain around the rover, pulses gently.
       const ringGeo = new THREE.RingGeometry(0.9, 1.0, 48);
       ringGeo.rotateX(-Math.PI / 2);
-      const modeColor = mode === 'Caution' ? 0xfacc15 : mode === 'Relocalizing' ? 0xf87171 : 0x22d3ee;
+      const modeColor = scanState === 'hazard' ? 0xef4444 : scanState === 'scanning' ? 0x38bdf8 : 0x22c55e;
       const ringMat = new THREE.MeshBasicMaterial({ color: modeColor, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
       const ring = new THREE.Mesh(ringGeo, ringMat);
       ring.userData.baseRadius = 1;
@@ -177,15 +217,16 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
       s.currentPos.set(position.x, sampleHeight(position.x, position.y) + markerSize, position.y);
       s.roverMesh.position.copy(s.currentPos);
       s.targetPos.copy(s.currentPos);
+      s.cameraTarget.set(position.x + 35, sampleHeight(position.x, position.y), position.y + 35);
 
       s.ready = true;
     };
 
-    const cacheKey = `${apiBase}/terrain-heightmap`;
+    const cacheKey = `${apiBase}/terrain-heightmap?frame=local-v2`;
     const cached = heightmapCache.get(cacheKey);
     const loadTerrain = cached
       ? Promise.resolve(cached)
-      : fetch(`${apiBase}/terrain-heightmap?grid_size=128`)
+      : fetch(`${apiBase}/terrain-heightmap?grid_size=128&frame=local-v2`)
           .then(res => {
             if (!res.ok) throw new Error(`status ${res.status}`);
             return res.json();
@@ -220,6 +261,22 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
         s.currentPos.lerp(s.targetPos, Math.min(1, dt * 2.2));
         s.roverMesh.position.copy(s.currentPos);
         s.roverMesh.rotation.y += dt * 0.6;
+
+        // Keep the view at rover scale: the camera looks forward from the
+        // rover instead of showing the entire 608 km DEM as an unreadable dot.
+        const cameraOffset = s.heading.clone().multiplyScalar(-45);
+        const cameraPosition = new THREE.Vector3(
+          s.currentPos.x + cameraOffset.x,
+          s.currentPos.y + 24,
+          s.currentPos.z + cameraOffset.z,
+        );
+        camera.position.lerp(cameraPosition, Math.min(1, dt * 2.5));
+        s.cameraTarget.set(
+          s.currentPos.x + s.heading.x * 45,
+          s.currentPos.y - 4,
+          s.currentPos.z + s.heading.z * 45,
+        );
+        controls.target.lerp(s.cameraTarget, Math.min(1, dt * 3));
 
         if (s.uncertaintyRing) {
           s.uncertaintyRing.position.set(s.currentPos.x, s.currentPos.y + 0.4, s.currentPos.z);
@@ -257,6 +314,11 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
   useEffect(() => {
     const s = sceneStateRef.current;
     if (!s || !s.ready) return;
+    const previous = lastPositionRef.current;
+    const dx = position.x - previous.x;
+    const dz = position.y - previous.y;
+    if (Math.hypot(dx, dz) > 0.01) s.heading.set(dx, 0, dz).normalize();
+    lastPositionRef.current = position;
     const groundH = s.sampleHeight(position.x, position.y);
     s.targetPos.set(position.x, groundH + 2, position.y);
     if (s.uncertaintyRing) {
@@ -272,6 +334,37 @@ export default function RoverTerrain3D({ apiBase, trail, position, uncertainty, 
     s.trailLine.geometry.dispose();
     s.trailLine.geometry = new THREE.BufferGeometry().setFromPoints(pts);
   }, [trail]);
+
+  useEffect(() => {
+    const s = sceneStateRef.current;
+    if (!s || !s.ready) return;
+    const updateLine = (line, points) => {
+      if (!line) return;
+      line.geometry.dispose();
+      line.geometry = new THREE.BufferGeometry().setFromPoints(
+        points.map(([x, y]) => new THREE.Vector3(x, s.sampleHeight(x, y) + 1.2, y)),
+      );
+      if (line.computeLineDistances) line.computeLineDistances();
+    };
+    updateLine(s.routeA, pathA);
+    updateLine(s.routeB, pathB);
+    updateLine(s.activeRoute, activePath);
+
+    s.hazardMeshes.forEach(mesh => {
+      s.scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+    });
+    s.hazardMeshes = hazards.map(hazard => {
+      const marker = new THREE.Mesh(
+        new THREE.ConeGeometry(2.8, 7, 8),
+        new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0x7f1d1d, emissiveIntensity: 0.8 }),
+      );
+      marker.position.set(hazard.x, s.sampleHeight(hazard.x, hazard.y) + 3.5, hazard.y);
+      s.scene.add(marker);
+      return marker;
+    });
+  }, [pathA, pathB, activePath, hazards]);
 
   return (
     <div className="relative w-full h-full">

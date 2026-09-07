@@ -44,7 +44,7 @@ except ImportError as e:
 
 # Safe import for the live localizer / simulation state including reasoning
 try:
-    from localization.state import get_current_position, get_rover_mode, get_reasoning
+    from localization.state import get_current_position, get_rover_mode, get_reasoning, get_navigation_state
     HAS_LOCALIZER = True
 except ImportError:
     try:
@@ -95,7 +95,13 @@ def _get_evaluation_metrics():
             resampling=Resampling.average,
         ).astype(np.float32)
 
-    ground_truth = load_craters(str(CRATER_DB_PATH))
+    ground_truth = [
+        {
+            **crater,
+            "radius": float(crater.get("radius", crater.get("diameter", 0.0) / 2.0)),
+        }
+        for crater in load_craters(str(CRATER_DB_PATH))
+    ]
     detections = detect_craters(depth_map)
     tp, fp, fn, center_errs, radius_errs = match_detections(ground_truth, detections)
     total_det = len(detections)
@@ -146,8 +152,15 @@ def _build_heightmap_payload(grid_size=128):
     # affine transform - same approach simulation/main.py's
     # downsampled_path_to_world() uses, so this lines up with the same
     # world frame the rover's telemetry x/y are already in.
-    x_coords = [float((transform * (c * step_c, 0))[0]) for c in range(cols)]
-    y_coords = [float((transform * (0, r * step_r))[1]) for r in range(rows)]
+    raw_x_coords = [float((transform * (c * step_c, 0))[0]) for c in range(cols)]
+    raw_y_coords = [float((transform * (0, r * step_r))[1]) for r in range(rows)]
+    # The simulator and telemetry use a local frame centered on the DEM.
+    # Keep the browser mesh in that same frame; otherwise the rover at (0, 0)
+    # is hundreds of kilometres away from the TIFF vertices.
+    frame_x = (raw_x_coords[0] + raw_x_coords[-1]) / 2
+    frame_y = (raw_y_coords[0] + raw_y_coords[-1]) / 2
+    x_coords = [x - frame_x for x in raw_x_coords]
+    y_coords = [y - frame_y for y in raw_y_coords]
 
     payload = {
         "rows": rows,
@@ -219,6 +232,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # Default fallback telemetry and reasoning values if localizer isn't connected yet
             pos_x, pos_y, uncertainty, current_mode = 145.6, -89.5, 2.55, "Driving"
             current_reasoning = "Awaiting simulation telemetry stream..."
+            navigation_state = {"path_a": [], "path_b": [], "active_path": [], "route_index": 0}
 
             # 1. Fetch live position, mode, and dynamic reasoning from state module
             if HAS_LOCALIZER:
@@ -230,6 +244,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         uncertainty = pos_data.get("uncertainty", uncertainty)
                     current_mode = get_rover_mode() or "Driving"
                     current_reasoning = get_reasoning() or current_reasoning
+                    navigation_state = get_navigation_state()
                 except Exception as loc_err:
                     print("Localizer sync warning:", loc_err)
 
@@ -251,6 +266,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 "recall": recall,
                 "center_error": center_error
             }
+            live_packet.update(navigation_state)
             
             # Send through the WebSocket tunnel to the UI
             await websocket.send_text(json.dumps(live_packet))
@@ -258,5 +274,5 @@ async def websocket_endpoint(websocket: WebSocket):
             # Stream data every 1 second
             await asyncio.sleep(1)
             
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, ConnectionResetError, RuntimeError, OSError):
         print("🔴 Frontend Dashboard Disconnected.")

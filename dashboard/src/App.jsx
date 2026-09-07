@@ -80,7 +80,7 @@ const MIN_WINDOW_M = 60;   // smallest camera window, in meters, so a barely-mov
 const EDGE_MARGIN_FRAC = 0.25; // re-expand once the rover is within 25% of an edge
 const GROWTH_FACTOR = 1.8;     // how much bigger the new window is when we do expand
 
-const RoverMap = ({ trail, position, uncertainty, mode }) => {
+const RoverMap = ({ trail, position, uncertainty, mode, pathA, pathB, activePath, hazards, scanState }) => {
   // Sticky chase-camera: re-fitting to the *entire* trail every frame was
   // the bug here. Because the current position is always at (or near) the
   // extreme edge of everything recorded so far during steady motion, a
@@ -90,7 +90,13 @@ const RoverMap = ({ trail, position, uncertainty, mode }) => {
   // rover is about to leave it, so the marker actually slides across the
   // screen in between expansions.
   const [view, setView] = useState(() => {
-    const half = Math.max(uncertainty * 4, MIN_WINDOW_M / 2);
+    const routePoints = [...pathA, ...pathB, ...activePath];
+    const routeHalf = routePoints.reduce((max, point) => Math.max(
+      max,
+      Math.abs(point[0] - position.x),
+      Math.abs(point[1] - position.y),
+    ), 0);
+    const half = Math.max(uncertainty * 4, MIN_WINDOW_M / 2, routeHalf * 1.15);
     return { minX: position.x - half, maxX: position.x + half, minY: position.y - half, maxY: position.y + half };
   });
 
@@ -113,6 +119,22 @@ const RoverMap = ({ trail, position, uncertainty, mode }) => {
     });
   }, [position.x, position.y, uncertainty]);
 
+  useEffect(() => {
+    const routePoints = [...pathA, ...pathB, ...activePath];
+    if (!routePoints.length) return;
+    const xs = routePoints.map(point => point[0]).concat(position.x);
+    const ys = routePoints.map(point => point[1]).concat(position.y);
+    const minX = Math.min(...xs), maxX = Math.max(...xs);
+    const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const half = Math.max(maxX - minX, maxY - minY, MIN_WINDOW_M) * 0.6;
+    setView({
+      minX: (minX + maxX) / 2 - half,
+      maxX: (minX + maxX) / 2 + half,
+      minY: (minY + maxY) / 2 - half,
+      maxY: (minY + maxY) / 2 + half,
+    });
+  }, [pathA.length, pathB.length, activePath.length]);
+
   const scale = VIEW / Math.max(view.maxX - view.minX, view.maxY - view.minY);
   const cx = (view.minX + view.maxX) / 2, cy = (view.minY + view.maxY) / 2;
 
@@ -123,11 +145,15 @@ const RoverMap = ({ trail, position, uncertainty, mode }) => {
   });
 
   const trailPts = trail.map(p => toSvg(p.x, p.y));
+  const pathAPts = pathA.map(p => toSvg(p[0], p[1]));
+  const pathBPts = pathB.map(p => toSvg(p[0], p[1]));
+  const activePathPts = activePath.map(p => toSvg(p[0], p[1]));
+  const hazardPts = hazards.map(hazard => toSvg(hazard.x, hazard.y));
   const roverPt = toSvg(position.x, position.y);
   const uncertaintyPx = Math.max(uncertainty * scale, 3);
 
   const gridLines = [...Array(9)].map((_, i) => (i + 1) * (VIEW / 10));
-  const modeColor = mode === 'Caution' ? '#facc15' : mode === 'Relocalizing' ? '#f87171' : '#22d3ee';
+  const modeColor = scanState === 'hazard' ? '#ef4444' : scanState === 'scanning' ? '#38bdf8' : '#22c55e';
 
   return (
     <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className="w-full h-full">
@@ -140,6 +166,21 @@ const RoverMap = ({ trail, position, uncertainty, mode }) => {
       ))}
 
       {/* travelled path */}
+      {activePathPts.length > 1 && (
+        <polyline points={activePathPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#22d3ee" strokeOpacity="0.35" strokeWidth="2" />
+      )}
+      {pathBPts.length > 1 && (
+        <polyline points={pathBPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#f97316" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="5 4" />
+      )}
+      {pathAPts.length > 1 && (
+        <polyline points={pathAPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#a78bfa" strokeOpacity="0.9" strokeWidth="2" strokeDasharray="2 3" />
+      )}
+      {hazardPts.map((point, index) => (
+        <g key={`hazard-${index}`}>
+          <circle cx={point.sx} cy={point.sy} r="8" fill="#ef4444" fillOpacity="0.25" stroke="#ef4444" strokeWidth="2" />
+          <path d={`M ${point.sx - 4} ${point.sy - 4} L ${point.sx + 4} ${point.sy + 4} M ${point.sx + 4} ${point.sy - 4} L ${point.sx - 4} ${point.sy + 4}`} stroke="#fecaca" strokeWidth="2" />
+        </g>
+      ))}
       {trailPts.length > 1 && (
         <polyline
           points={trailPts.map(p => `${p.sx},${p.sy}`).join(' ')}
@@ -185,7 +226,7 @@ const AuditLogPanel = ({ entries, loading }) => {
       {entries.map((entry, i) => (
         <div key={i} className="border border-white/10 bg-black/50 p-2">
           <div className="flex justify-between text-[8px] text-gray-400 tracking-widest mb-1">
-            <span>DECISION #{entries.length - i}</span>
+            <span>ROUTE DECISION #{entries.length - i}</span>
             <span>{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--:--:--'}</span>
           </div>
           <p className="text-[10px] text-cyan-300 leading-snug normal-case">{entry.explanation}</p>
@@ -204,6 +245,8 @@ function App() {
     precision: 0.0,
     recall: 0.0,
     center_error: 0.0
+    ,path_a: [], path_b: [], active_path: [], route_index: 0
+    ,hazards: [], scan_state: 'clear', path_choice: 'A'
   });
   const [trail, setTrail] = useState([]);
   const [auditLog, setAuditLog] = useState([]);
@@ -213,7 +256,10 @@ function App() {
 
   useEffect(() => {
     let ws;
+    let reconnectTimer;
+    let disposed = false;
     const connectWebSocket = () => {
+      if (disposed) return;
       ws = new WebSocket(WS_URL);
 
       ws.onmessage = (event) => {
@@ -227,6 +273,8 @@ function App() {
             precision: data.precision ?? 0.0,
             recall: data.recall ?? 0.0,
             center_error: data.center_error ?? 0.0
+            ,path_a: data.path_a || [], path_b: data.path_b || [], active_path: data.active_path || [], route_index: data.route_index || 0
+            ,hazards: data.hazards || [], scan_state: data.scan_state || 'clear', path_choice: data.path_choice || 'A'
           });
 
           // Accumulate position history for the trail/trajectory view.
@@ -247,12 +295,16 @@ function App() {
       };
 
       ws.onclose = () => {
-        setTimeout(connectWebSocket, 2000);
+        if (!disposed) reconnectTimer = setTimeout(connectWebSocket, 2000);
       };
     };
 
     connectWebSocket();
-    return () => { if (ws) ws.close(); };
+    return () => {
+      disposed = true;
+      clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    };
   }, []);
 
   // Poll the audit trail endpoint independently of the WS telemetry
@@ -292,15 +344,15 @@ function App() {
           <h2 className="text-sm text-gray-400 tracking-[0.3em] mt-2">LUNAR TELEMETRY</h2>
         </div>
 
-        {/* Center: Live Orbital Debris Tracker (Made BIGGER with larger text and padding) */}
+        {/* Center: live rover navigation status */}
         <div className="hidden lg:flex items-center gap-6 border border-white/40 px-8 py-4 bg-black/60 shadow-[0_0_20px_rgba(34,211,238,0.25)]">
           <div className="flex flex-col text-xs text-gray-200 tracking-widest text-right leading-relaxed">
-            <span className="font-bold">COORDS HIGH: 9939.12</span>
-            <span>CODE: EXECUTION 0.11U</span>
-            <span className="text-cyan-400">DOCK OFFLOAD.</span>
+            <span className="font-bold">DEM SOURCE: LUNAR_MAP.TIFF</span>
+            <span>LOCAL FRAME: POLAR STEREOGRAPHIC</span>
+            <span className="text-cyan-400">ROUTE CONTROL: ACTIVE</span>
           </div>
           <HeaderBarChart />
-          <span className="text-lg tracking-widest font-bold text-white">LIVE ORBITAL DEBRIS TRACKER</span>
+            <span className="text-lg tracking-widest font-bold text-white">ROVER TERRAIN NAVIGATION</span>
         </div>
 
         {/* Right: System Status */}
@@ -430,6 +482,9 @@ function App() {
           <div className="flex items-center justify-between mb-2">
             <div className="font-mono text-sm text-gray-200 tracking-widest">LIVE POSITION MAP</div>
             <div className="flex items-center gap-3">
+              <div className="text-[8px] tracking-widest text-gray-400 hidden md:block">
+                <span className="text-sky-300">SCAN</span> / <span className="text-red-400">HAZARD</span> / <span className="text-green-400">CLEAR</span>
+              </div>
               <div className="text-[8px] text-gray-400 tracking-widest hidden md:block">TRAIL: {trail.length} PTS</div>
               <div className="flex border border-white/20 text-[9px] tracking-widest">
                 <button
@@ -449,9 +504,20 @@ function App() {
           </div>
           <div className="relative flex-1 min-h-0">
             {mapMode === '2d' ? (
-              <RoverMap trail={trail} position={telemetry.position} uncertainty={telemetry.uncertainty} mode={telemetry.mode} />
+              <RoverMap trail={trail} position={telemetry.position} uncertainty={telemetry.uncertainty} mode={telemetry.mode} pathA={telemetry.path_a} pathB={telemetry.path_b} activePath={telemetry.active_path} hazards={telemetry.hazards} scanState={telemetry.scan_state} />
             ) : (
-              <RoverTerrain3D apiBase={API_BASE} trail={trail} position={telemetry.position} uncertainty={telemetry.uncertainty} mode={telemetry.mode} />
+              <RoverTerrain3D
+                apiBase={API_BASE}
+                trail={trail}
+                position={telemetry.position}
+                uncertainty={telemetry.uncertainty}
+                mode={telemetry.mode}
+                pathA={telemetry.path_a}
+                pathB={telemetry.path_b}
+                activePath={telemetry.active_path}
+                hazards={telemetry.hazards}
+                scanState={telemetry.scan_state}
+              />
             )}
           </div>
         </div>

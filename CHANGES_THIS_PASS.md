@@ -144,6 +144,136 @@ The inner `backend/api.py` now:
   fewer than three visible craters, allowing uncertainty recovery instead of
   repeatedly failing correction.
 
+## 8. DEM navigation, rover POV, and real route audit
+
+The earlier dashboard showed a generic rover trail and a full-tile 3D mesh,
+which made the rover appear stationary and did not expose the planner's actual
+decision. This pass changes the behavior to:
+
+- Derive a slope map from `data/Lunar_Map.tiff` and give that to A* instead of
+  treating elevation values as slope angles.
+- Convert the planner's downsampled grid coordinates back into the DEM's local
+  meter frame.
+- Make the simulator follow the selected terrain-aware route waypoint by
+  waypoint instead of driving a hard-coded straight line.
+- Persist `path_a`, `path_b`, `active_path`, and `route_index` in telemetry.
+- Draw Path A, Path B, the selected route, and the rover's travelled trail in
+  the 2D map with separate colors and line styles.
+- Make the Three.js view follow the rover at local scale, looking forward over
+  the same TIFF-derived mesh. The full-tile mesh is still the source, but the
+  camera is now a rover POV rather than a distant overview.
+- Compute audit slip risk, covariance exposure, and energy proxy from the
+  actual derived slope map and route distance. Audit entries are created when
+  the simulator replans and are displayed by the existing `/audit-log` poll.
+- Replace the unrelated orbital/debris placeholder text with truthful rover
+  terrain-navigation labels. CORS configuration was left unchanged.
+- Prevent WebSocket reconnect timers from surviving React cleanup, which was
+  creating duplicate browser connections.
+- Treat closed/reset WebSocket sends as normal disconnects in the backend,
+  preventing repeated `socket.send() raised exception` noise.
+- Normalize crater database `diameter` values to detector `radius` values in
+  backend evaluation, restoring live precision/recall calculation.
+
+## 9. Blue scan, red hazard, green route behavior
+
+The repeated audit entries were caused by comparing two routes generated with
+the same cost model. The simulation now:
+
+- Plans on a denser local window of the real `Lunar_Map.tiff`, so paths have
+  visible waypoints instead of only three coarse cells.
+- Loads an 800x800 local TIFF window for the simulator, avoiding the long
+  30,400x30,400 startup read while preserving the real DEM values used by the
+  local mission.
+- Builds Path A with a strong slope penalty and a 15-degree safe-slope limit.
+- Builds Path B as the shortest practical route with a low slope penalty and a
+  wider 35-degree limit.
+- Scans the terrain ahead of the rover from the derived DEM slope map.
+- Shows the scan state in blue, measured terrain hazards in red, and a clear
+  route state in green.
+- Logs a route decision only when a new hazard cell is detected, instead of
+  writing identical decisions every loop.
+- Keeps the hazard marker visible after detection but returns the rover state
+  to green route-following on subsequent scans of the same cell.
+
+## 10. Coordinate-frame and route-visibility correction
+
+The 3D screenshot showed the rover floating because the mesh was emitted in
+absolute TIFF coordinates (`-304000..304000`) while telemetry and routes use a
+local rover frame near `(0, 0)`. The terrain endpoint now centers its `x_coords`
+and `y_coords` around zero, and the frontend requests `frame=local-v2` so an
+old cached mesh cannot be reused.
+
+The 2D map now refits whenever route data arrives and draws the cyan active
+route underneath the purple Path A and orange Path B lines, so selected-route
+segments no longer hide the candidate route colors.
+
+## 11. Local route horizon and nearby hazard cleanup
+
+The route was previously serialized from the rover to the entire goal, which
+made it look pre-scripted. The simulator now publishes only the next 10
+waypoints and replans that horizon as the rover advances. The hazard payload
+contains only the currently scanned nearby hazard and is cleared when the
+forward scan is clear. Multiple simulator processes must not run at the same
+time because they share `localization/telemetry.json`; stop old copies before
+starting a new one.
+
+After updating, hard-refresh the browser once (`Ctrl+F5`) to clear the prior
+heightmap from memory. Then select `2D` or `3D` again.
+- Persists hazard coordinates, scan state, decision id, and selected path in
+  telemetry so the 2D and 3D views show the same event.
+- Adds hazard crosses/markers and route colors to 2D and 3D. The 3D rover now
+  has a chassis, mast, and four wheels, and the DEM mesh uses elevation-based
+  vertex shading so the real TIFF relief is visible.
+
+Restart all processes after pulling these changes:
+
+```powershell
+# Backend
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih
+python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000
+
+# Simulation, in a second terminal
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih
+python simulation/main.py
+
+# Dashboard, in a third terminal
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih\dashboard
+npm run dev
+```
+
+The 2D map should show purple/orange candidate routes, cyan active route,
+red hazard markers, and a green rover when clear. The 3D tab uses the same
+coordinates and state over the actual TIFF-derived mesh.
+
+### Run order
+
+Use three terminals from the inner project directory:
+
+```powershell
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih
+..\.venv\Scripts\Activate.ps1
+python -m uvicorn backend.api:app --host 0.0.0.0 --port 8000
+```
+
+```powershell
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih
+..\.venv\Scripts\Activate.ps1
+python simulation/main.py
+```
+
+```powershell
+cd C:\Users\prava\OneDrive\Desktop\PROJECTS\SURAKSHALANDER\sih\sih\dashboard
+npm run dev
+```
+
+Open the Vite URL, choose `2D` to inspect candidate and selected paths, or
+choose `3D` for the rover-following TIFF view. The audit panel updates after a
+route plan/re-localization event; verify it directly with:
+
+```powershell
+Invoke-RestMethod http://localhost:8000/audit-log
+```
+
 Run the backend from the inner project directory so the dashboard reaches the
 application that owns both routes:
 
