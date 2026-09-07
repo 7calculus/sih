@@ -5,9 +5,16 @@ import numpy as np
 import rasterio
 
 
-# Terrain files produced by M1
-SLOPE_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "slope.tif"
-ROUGHNESS_PATH = Path(__file__).resolve().parent.parent / "data" / "processed" / "roughness.tif"
+# Terrain files produced by M1 (with fallback to Lunar_Map.tiff if processed files don't exist)
+BASE_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+SLOPE_PATH = BASE_DATA_DIR / "processed" / "slope.tif"
+if not SLOPE_PATH.exists():
+    SLOPE_PATH = BASE_DATA_DIR / "Lunar_Map.tiff"
+
+ROUGHNESS_PATH = BASE_DATA_DIR / "processed" / "roughness.tif"
+if not ROUGHNESS_PATH.exists():
+    ROUGHNESS_PATH = BASE_DATA_DIR / "Lunar_Map.tiff"
 
 
 def read_path_values(path, raster_path):

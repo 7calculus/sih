@@ -1,9 +1,9 @@
-
+Here is the complete, updated `README.md` in a single Markdown block. You can copy this directly and paste it into your repository!
 
 ```markdown
-# SurakshaLander: Autonomous Lunar Navigation & HUD
+# SurakshaLander — Explainable, Auditable Autonomy for Lunar Rover Navigation
 
-SurakshaLander is an integrated simulation and telemetry system designed for autonomous lunar rover navigation, perception, and re-localization using real Digital Elevation Model (DEM) data and crater databases.
+SurakshaLander is an integrated simulation and telemetry system designed for autonomous lunar rover navigation. It features deterministic contrastive explanations, persistent audit trails for asynchronous ground operator review, and measured edge-hardware performance[cite: 1].
 
 ---
 
@@ -11,6 +11,7 @@ SurakshaLander is an integrated simulation and telemetry system designed for aut
 
 * **Backend (`/backend`)**: FastAPI server streaming real-time telemetry and crater evaluation metrics via WebSockets.
 * **Frontend (`/dashboard`)**: React and Vite-powered command-center HUD for live mission tracking and spatial visualization.
+* **Explainability & Audit (`/explain`)**: Rule-based engine generating deterministic contrastive path justifications (`generate_explanation.py`) and timestamped, exportable operator logs (`audit_logger.py`)[cite: 1].
 * **Terrain & Data (`/terrain`)**: Terrain preprocessing pipeline, slope/roughness matrix generation, and crater catalog mapping for M2 (Localization) and M4 (Planning).
 * **Simulation & Core (`/simulation`, `/src`, `/localization`, `/navigation`)**: Orchestrates rover movement, local terrain patching, OpenCV-based crater matching, and path planning.
 
@@ -52,10 +53,12 @@ The large `.tif`/`.tiff` elevation files and raw `.csv` datasets are excluded fr
 
 **Required Directory Structure & Outputs:**
 
-* `data/dem/` — Raw DEM elevation tile (e.g., `Lunar_MapE.tif` or `south_p_20m.tiff`)
-* `data/processed/slope.tif` — Terrain slope in degrees (consumed by M4)
-* `data/processed/roughness.tif` — Elevation standard deviation in meters (consumed by M4)
-* `crater_db/crater_db.sqlite` — Top South Pole craters catalog (consumed by M2)
+* `data/Lunar_Map.tiff` — Main DEM elevation tile.
+* `data/processed/slope.tif` — Terrain slope in degrees (consumed by M4).
+* `data/processed/roughness.tif` — Elevation standard deviation in meters (consumed by M4).
+* `crater_db/crater_db.sqlite` — Top South Pole craters catalog (consumed by M2).
+
+*Note: The explainability engine features an automatic fallback mechanism. If `slope.tif` and `roughness.tif` are missing from the `/processed` folder, the system will seamlessly redirect to evaluate `Lunar_Map.tiff` to prevent runtime crashes.*
 
 *(Optional pipeline execution to build data locally from raw NASA/Robbins sources)*:
 
@@ -105,7 +108,3 @@ python -m simulation.main
 
 * **Region Covered:** Lunar South Pole, approximately 80°S–90°S, polar stereographic projection, ~608km × 608km tile, 20m/pixel resolution.
 * **Coordinate Mapping:** The crater database stores plain lat/lon (spherical coordinates), while the DEM, slope, and roughness rasters use polar stereographic **meters**. A spatial conversion script (`localization/coords.py`) bridges matching between raster pixels and catalog coordinates.
-
-```
-
-```

@@ -10,7 +10,7 @@ const CornerBrackets = () => (
   </>
 );
 
-// Fake Bar Chart for Header - Made slightly taller for the "BIG" look
+// Fake Bar Chart for Header
 const HeaderBarChart = () => (
   <div className="flex items-end gap-[3px] h-8">
     {[...Array(15)].map((_, i) => (
@@ -63,13 +63,20 @@ const MountainGrid = () => (
 
 function App() {
   const [agentLog, setAgentLog] = useState("Connecting to WebSocket backend...");
+  
+  const [auditLogs, setAuditLogs] = useState([
+    '[10:55:35] M6 AUDIT: Rover cruising at nominal parameters.',
+    '[10:50:00] MISSION INITIALIZED: Telemetry link established.'
+  ]);
+
   const [telemetry, setTelemetry] = useState({
     mode: 'Connecting',
     position: { x: 0.0, y: 0.0 },
     uncertainty: 0.0,
     precision: 0.0,
     recall: 0.0,
-    center_error: 0.0
+    center_error: 0.0,
+    m6_explanation: 'AWAITING M6 TELEMETRY...'
   });
 
   useEffect(() => {
@@ -80,14 +87,21 @@ function App() {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          
           if (data.reasoning) setAgentLog(data.reasoning);
+          
+          if (data.m6_audit_log) {
+            setAuditLogs((prev) => [data.m6_audit_log, ...prev.slice(0, 19)]);
+          }
+
           setTelemetry({
             mode: data.mode || 'Driving',
             position: { x: data.x, y: data.y },
             uncertainty: data.uncertainty,
             precision: data.precision ?? 0.0,
             recall: data.recall ?? 0.0,
-            center_error: data.center_error ?? 0.0
+            center_error: data.center_error ?? 0.0,
+            m6_explanation: data.m6_explanation || 'PATH EVALUATING...'
           });
         } catch (e) {
           console.error("Failed to parse WS packet", e);
@@ -105,7 +119,7 @@ function App() {
 
   return (
     <div 
-      className="min-h-screen bg-cover bg-center font-mono text-white uppercase p-6 md:p-8 flex flex-col justify-between"
+      className="min-h-screen bg-cover bg-center font-mono text-white uppercase p-6 md:p-8 flex flex-col justify-between overflow-hidden"
       style={{ backgroundImage: 'url(/moon-surface.png)' }} 
     >
       <div className="absolute inset-0 bg-black/30 z-0 pointer-events-none" />
@@ -113,11 +127,11 @@ function App() {
       {/* ================= HEADER ================= */}
       <header className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center w-full mb-6 border-b border-white/20 pb-4">
         <div>
-          <h1 className="text-5xl tracking-[0.2em] font-bold text-white drop-shadow-md">LUNAR TELEMETRY</h1>
-          <h2 className="text-sm text-gray-400 tracking-[0.3em] mt-2">SURAKSHA LANDER</h2>
+          <h1 className="text-5xl tracking-[0.2em] font-bold text-white drop-shadow-md">SURAKSHA LANDER</h1>
+          <h2 className="text-sm text-gray-400 tracking-[0.3em] mt-2">LUNAR TELEMETRY</h2>
         </div>
 
-        {/* Center: Live Orbital Debris Tracker (Made BIGGER with larger text and padding) */}
+        {/* Center: Live Orbital Debris Tracker */}
         <div className="hidden lg:flex items-center gap-6 border border-white/40 px-8 py-4 bg-black/60 shadow-[0_0_20px_rgba(34,211,238,0.25)]">
           <div className="flex flex-col text-xs text-gray-200 tracking-widest text-right leading-relaxed">
             <span className="font-bold">COORDS HIGH: 9939.12</span>
@@ -142,8 +156,8 @@ function App() {
         </div>
       </header>
 
-      {/* ================= 3-COLUMN DATA PANELS ================= */}
-      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 w-full mb-6 h-[240px]">
+      {/* ================= 4-COLUMN DATA PANELS ================= */}
+      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-4 gap-6 w-full mb-4 h-[240px]">
         
         {/* 1. ROVER MODE */}
         <div className="relative bg-black/40 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between overflow-hidden">
@@ -151,28 +165,26 @@ function App() {
           <RadarGears />
           
           <div className="relative z-10 flex flex-col h-full justify-between">
-            {/* Moved UP: Title and Connecting/Driving Status */}
             <div>
               <div className="font-mono text-sm text-gray-200 tracking-widest mb-4">ROVER MODE</div>
               <div className="flex items-center gap-4">
                 <div className="w-5 h-5 rounded-full bg-cyan-400 shadow-[0_0_15px_#22d3ee]"></div>
-                <div className="text-cyan-400 text-6xl drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold tracking-wide">{telemetry.mode}</div>
+                <div className="text-cyan-400 text-3xl xl:text-4xl drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold tracking-wide truncate">{telemetry.mode}</div>
               </div>
             </div>
             
-            {/* CORRECTED: Spread Out Metrics across the full width */}
             <div className="w-full flex flex-col gap-1 bg-black/70 p-3 border border-white/10 mt-auto">
               <div className="flex justify-between items-end border-b border-white/20 pb-1 mb-1">
                 <span className="text-[9px] font-bold text-gray-400">DETECTION METRICS</span>
-                <span className="text-[8px] text-gray-400 tracking-widest">SUB-TELEMETRY</span>
+                <span className="text-[8px] text-gray-400 tracking-widest hidden xl:block">SUB-TELEMETRY</span>
               </div>
               <div className="flex justify-between items-center w-full">
-                <div className="text-[9px] text-cyan-300">PRECISION: <span className="text-white">{telemetry.precision}</span></div>
-                <div className="text-[9px] text-cyan-300">RECALL: <span className="text-white">{telemetry.recall}</span></div>
-                <div className="text-[9px] text-cyan-300">CNTR ERR: <span className="text-white">{telemetry.center_error}px</span></div>
+                <div className="text-[9px] text-cyan-300">PREC: <span className="text-white">{telemetry.precision}</span></div>
+                <div className="text-[9px] text-cyan-300">REC: <span className="text-white">{telemetry.recall}</span></div>
+                <div className="text-[9px] text-cyan-300">ERR: <span className="text-white">{telemetry.center_error}px</span></div>
               </div>
               <div className="flex items-end gap-[2px] h-4 mt-1">
-                {[...Array(20)].map((_, i) => (
+                {[...Array(15)].map((_, i) => (
                   <div key={i} className="flex-1 bg-white/50 animate-pulse" style={{ height: `${Math.random() * 80 + 20}%`, animationDelay: `${Math.random()}s` }} />
                 ))}
               </div>
@@ -188,26 +200,25 @@ function App() {
           <div className="relative z-10 flex flex-col h-full">
             <div className="flex justify-between w-full mb-6">
               <div className="font-mono text-sm text-gray-200 tracking-widest">POSITION (X, Y)</div>
-              <div className="text-[7px] text-gray-400 tracking-widest text-right leading-relaxed">
+              <div className="text-[6px] xl:text-[7px] text-gray-400 tracking-widest text-right leading-relaxed">
                 LATERAL OFFSET: ACTIVE<br/>
                 DROP DOWN MENU: INVERT<br/>
                 TELEMETRY LOGS: ONLINE
               </div>
             </div>
             
-            {/* Moved UP: X and Y Coordinates are immediately below the top text */}
             <div className="flex justify-around w-full mt-2">
               <div className="text-center">
-                <div className="text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-4">X-COORDINATE</div>
-                <div className="text-6xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.x}</div>
+                {/* X-COORDINATES */}
+                <div className="text-xs xl:text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-2 xl:px-4">X-COORDINATES</div>
+                <div className="text-4xl xl:text-5xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.x}</div>
               </div>
               <div className="text-center">
-                <div className="text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-4">Y-COORDINATE</div>
-                <div className="text-6xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.y}</div>
+                {/*  Y-COORDINATES */}
+                <div className="text-xs xl:text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-2 xl:px-4">Y-COORDINATES</div>
+                <div className="text-4xl xl:text-5xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.y}</div>
               </div>
             </div>
-
-            {/* Empty space block to push everything upward naturally */}
             <div className="mt-auto"></div>
           </div>
         </div>
@@ -218,25 +229,23 @@ function App() {
           
           <div className="flex justify-between items-start w-full">
             <div className="font-mono text-sm text-gray-200 tracking-widest mt-1">UNCERTAINTY</div>
-            {/* Made BIGGER: Bold text, padded background, glowing cyan border */}
-            <div className="text-xs md:text-sm text-cyan-300 font-bold tracking-widest text-right px-4 py-2 bg-black/80 border border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.3)]">
-              TARGET RECALL: &gt;= 0.80<br/>
-              <span className="text-white">STATUS: EVALUATING</span>
+            <div className="text-[10px] xl:text-xs text-cyan-300 font-bold tracking-widest text-right px-2 py-1 xl:px-4 xl:py-2 bg-black/80 border border-cyan-500/50 shadow-[0_0_15px_rgba(34,211,238,0.3)]">
+              TARGET: &gt;= 0.80<br/>
+              <span className="text-white">EVALUATING</span>
             </div>
           </div>
           
-          {/* CORRECTED: Spread Out Uncertainty Progress Bars full width */}
           <div className="w-full flex flex-col gap-1.5 mt-6">
              <div className="w-full h-1.5 bg-gray-700 relative"><div className="absolute right-0 h-full w-[85%] bg-cyan-400/80 shadow-[0_0_8px_#22d3ee]"></div></div>
              <div className="w-full h-1 bg-gray-700 relative"><div className="absolute right-0 h-full w-[60%] bg-white/60"></div></div>
              <div className="w-full h-1 bg-gray-700 relative"><div className="absolute right-0 h-full w-[75%] bg-white/40"></div></div>
           </div>
 
-          <div className="flex items-baseline gap-3 mb-2 mt-auto">
-            <span className="text-7xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] tracking-tighter font-bold">
+          <div className="flex items-baseline gap-2 mb-2 mt-auto">
+            <span className="text-6xl xl:text-7xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] tracking-tighter font-bold">
               {telemetry.uncertainty}
             </span>
-            <span className="text-base text-white/60 tracking-widest">METERS</span>
+            <span className="text-sm xl:text-base text-white/60 tracking-widest">METERS</span>
           </div>
           
           <div className="text-[10px] text-gray-400 tracking-widest">
@@ -244,27 +253,64 @@ function App() {
           </div>
         </div>
 
+        {/* 4. NAVIGATION REASONING */}
+        <div className="relative bg-black/40 backdrop-blur-sm border border-white/20 p-5 flex flex-col overflow-hidden">
+          <CornerBrackets />
+          
+          <div className="flex justify-between items-center border-b border-white/20 pb-2 mb-2 shrink-0">
+            <span className="text-sm text-gray-200 tracking-widest font-bold">NAVIGATION REASONING</span>
+            <span className="text-[10px] text-gray-400">STATUS: STREAMING</span>
+          </div>
+          
+          <div className="overflow-y-auto pr-2 scrollbar-thin flex-grow mt-2">
+            <div className="font-mono text-sm xl:text-base text-cyan-300 tracking-wide flex items-start gap-2">
+              <span className="text-white font-bold">&gt;</span>
+              <p className="leading-relaxed animate-pulse">
+                {agentLog}
+              </p>
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      {/* ================= BOTTOM PANEL: LIVE TERMINAL ================= */}
-      <div className="relative z-10 w-full bg-black/60 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between h-[120px]">
+      {/* ================= EXPLAINABILITY STRIP ================= */}
+      <div className="relative z-10 w-full bg-black/60 backdrop-blur-sm border border-white/20 p-6 min-h-[100px] mb-4 flex items-start gap-4 shadow-[0_0_15px_rgba(34,211,238,0.1)]">
+        <CornerBrackets />
+        
+        {/* Strip Header */}
+        <div className="flex items-center gap-2 border-r border-white/20 pr-4 shrink-0 mt-0.5">
+          <div className="w-2 h-2 rounded-none bg-cyan-400 animate-ping"></div>
+          <span className="text-xs xl:text-sm tracking-widest text-gray-200 font-bold">TRAJECTORY ANALYSIS</span>
+        </div>
+        
+        {/* Dynamic AI Output */}
+        <p className="font-mono text-xs xl:text-sm text-cyan-300 tracking-wide leading-relaxed font-bold break-words w-full">
+          {telemetry.m6_explanation}
+        </p>
+      </div>
+
+      {/* ================= BOTTOM PANEL: AUDIT TRAIL ================= */}
+      <div className="relative z-10 w-full bg-black/60 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between h-[160px]">
         <CornerBrackets />
         
         <div className="flex items-center justify-between border-b border-white/10 pb-1">
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
-            <span className="text-xs tracking-widest text-cyan-400 font-bold">NAVIGATION REASONING</span>
+            <span className="text-xs tracking-widest text-gray-200 font-bold">AUDIT TRAIL</span>
           </div>
-          <span className="text-[8px] text-gray-400">STATUS: STREAMING</span>
+          <span className="text-[8px] text-emerald-400 animate-pulse">RECORDING</span>
         </div>
 
-        <div className="font-mono text-sm text-cyan-300 tracking-wide flex items-start gap-2 pt-2">
-          <span className="text-white font-bold">&gt;</span>
-          <p className="leading-relaxed animate-pulse">
-            {agentLog}
-          </p>
+        <div className="overflow-y-auto space-y-3 text-sm text-cyan-300 font-bold tracking-wide pr-2 scrollbar-thin flex-grow mt-2">
+          {auditLogs.map((log, i) => (
+            <div key={i} className="leading-relaxed py-1 border-b border-white/10 font-mono">
+              {log}
+            </div>
+          ))}
         </div>
       </div>
+      
     </div>
   );
 }

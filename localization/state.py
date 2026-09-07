@@ -9,7 +9,9 @@ default_telemetry = {
     "y": 0,
     "uncertainty": 0,
     "mode": "connecting",
-    "reasoning": "System initialized. Awaiting live telemetry stream."
+    "reasoning": "System initialized. Awaiting live telemetry stream.",
+    "m6_explanation": "AWAITING M6 ENGINE...", 
+    "m6_audit_log": ""                           
 }
 
 def _read_state():
@@ -28,13 +30,16 @@ def _write_state(data):
     except Exception as e:
         print(f"State write error: {e}")
 
-def update_telemetry(x, y, uncertainty, mode, reasoning):
+# 🚀 FIX: The function now accepts all 7 arguments!
+def update_telemetry(x, y, uncertainty, mode, reasoning, m6_explanation="AWAITING M6 ENGINE...", m6_audit_log=""):
     data = _read_state()
     data["x"] = round(float(x), 2)
     data["y"] = round(float(y), 2)
     data["uncertainty"] = round(float(uncertainty), 2)
     data["mode"] = mode
     data["reasoning"] = reasoning
+    data["m6_explanation"] = m6_explanation      
+    data["m6_audit_log"] = m6_audit_log          
     _write_state(data)
 
 def get_current_position():

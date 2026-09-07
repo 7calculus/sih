@@ -23,12 +23,14 @@ except ImportError as e:
 
 # Safe import for the live localizer / simulation state including reasoning
 try:
-    from localization.state import get_current_position, get_rover_mode, get_reasoning
+    # 🚀 FIX 1: Imported _read_state so we can access the M6 fields from the JSON
+    from localization.state import get_current_position, get_rover_mode, get_reasoning, _read_state
     HAS_LOCALIZER = True
 except ImportError:
     try:
         from localization.localizer import get_current_position, get_rover_mode
         def get_reasoning(): return "System active. Streaming live telemetry."
+        def _read_state(): return {} # Dummy fallback
         HAS_LOCALIZER = True
     except ImportError:
         HAS_LOCALIZER = False
@@ -51,6 +53,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # Default fallback telemetry and reasoning values if localizer isn't connected yet
             pos_x, pos_y, uncertainty, current_mode = 145.6, -89.5, 2.55, "Driving"
             current_reasoning = "Awaiting simulation telemetry stream..."
+            
+            # 🚀 FIX 2: Default M6 values
+            m6_exp = "AWAITING M6 ENGINE..."
+            m6_audit = ""
 
             # 1. Fetch live position, mode, and dynamic reasoning from state module
             if HAS_LOCALIZER:
@@ -62,6 +68,12 @@ async def websocket_endpoint(websocket: WebSocket):
                         uncertainty = pos_data.get("uncertainty", uncertainty)
                     current_mode = get_rover_mode() or "Driving"
                     current_reasoning = get_reasoning() or current_reasoning
+                    
+                    # 🚀 FIX 3: Read the new M6 variables directly from the state file
+                    full_state = _read_state()
+                    m6_exp = full_state.get("m6_explanation", m6_exp)
+                    m6_audit = full_state.get("m6_audit_log", m6_audit)
+                    
                 except Exception as loc_err:
                     print("Localizer sync warning:", loc_err)
 
@@ -90,7 +102,11 @@ async def websocket_endpoint(websocket: WebSocket):
                 "reasoning": current_reasoning,
                 "precision": precision,
                 "recall": recall,
-                "center_error": center_error
+                "center_error": center_error,
+                
+                # 🚀 FIX 4: Send the M6 data through the WebSocket to React!
+                "m6_explanation": m6_exp,
+                "m6_audit_log": m6_audit
             }
             
             # Send through the WebSocket tunnel to the UI
