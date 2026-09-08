@@ -1,0 +1,15 @@
+﻿__pycache__/
+*.pyc
+.venv/
+venv/
+data/
+*.tif
+*.tiff
+*.sqlite
+dashboard/node_modules/
+.vite/
+localization/telemetry.json
+explain/decision_log.json
+_diag.py
+sih1.zip
+crater_db.zip
