@@ -43,7 +43,7 @@ class TestLocalizer(unittest.TestCase):
         after = self.localizer.get_telemetry()['uncertainty']
         
         self.assertGreater(after, before)
-        print(f"✅ Drift test: {before:.2f}m → {after:.2f}m")
+        print(f"[OK] Drift test: {before:.2f}m -> {after:.2f}m")
     
     def test_uncertainty_levels(self):
         """Test that uncertainty thresholds map to correct levels."""
@@ -63,7 +63,7 @@ class TestLocalizer(unittest.TestCase):
         self.localizer.covariance[1, 1] = 13.0
         self.assertEqual(self.localizer.get_uncertainty_level(), 're_localizing')
         
-        print("✅ Uncertainty levels test passed")
+        print("[OK] Uncertainty levels test passed")
         
     def test_correct_with_real_craters(self):
         """Test that correct() works with real crater data."""
@@ -81,14 +81,14 @@ class TestLocalizer(unittest.TestCase):
         after = self.localizer.get_telemetry()['uncertainty']
         
         self.assertLess(after, before)
-        print(f"✅ Correction test: {before:.2f}m → {after:.2f}m")
+        print(f"[OK] Correction test: {before:.2f}m -> {after:.2f}m")
     
     def test_correct_fails_without_enough_craters(self):
         """Test that correct() returns False with <3 detections."""
         detections = generate_detections(2, use_real_craters=True)
         success = self.localizer.correct(detections)
         self.assertFalse(success)
-        print("✅ Failure test passed (not enough craters)")
+        print("[OK] Failure test passed (not enough craters)")
     
     def test_correct_fallback(self):
         """Test that fallback mode works when detection fails."""
@@ -102,7 +102,7 @@ class TestLocalizer(unittest.TestCase):
         success = self.localizer.correct([], use_fallback=True, fallback_craters=fallback)
         # This may still fail if fallback craters don't match real landmarks,
         # but we're just testing the function handles fallback parameters
-        print("✅ Fallback test completed")
+        print("[OK] Fallback test completed")
     
     def test_relocalization_count_increments(self):
         """Test that relocalization_count increments after successful correction."""
@@ -121,7 +121,7 @@ class TestLocalizer(unittest.TestCase):
         count_after_second = self.localizer.get_telemetry()['relocalization_count']
         self.assertEqual(count_after_second, 2)
         
-        print(f"✅ Relocalization count test: {count_after_second} corrections")
+        print(f"[OK] Relocalization count test: {count_after_second} corrections")
 
     
     def test_get_pose_matches_prd_contract(self):
@@ -135,7 +135,7 @@ class TestLocalizer(unittest.TestCase):
         self.assertEqual(y, 0.0)
         self.assertEqual(heading, 0.0)
         self.assertEqual(len(covariance), 3)  # 3x3 matrix as nested list
-        print("✅ get_pose() PRD contract test passed")
+        print("[OK] get_pose() PRD contract test passed")
 
 
 if __name__ == "__main__":

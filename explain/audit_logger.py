@@ -22,6 +22,9 @@ def log_decision(
         "chosen_path": chosen_path,
         "rejected_path": rejected_path,
         "metrics": {
+            "path_a": metrics_a,
+            "path_b": metrics_b,
+            # legacy aliases kept for older UI readers
             "chosen": metrics_a,
             "rejected": metrics_b,
         },

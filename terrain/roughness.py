@@ -1,7 +1,10 @@
 import numpy as np
 import rasterio
+from pathlib import Path
 from scipy.ndimage import uniform_filter
 from dem_loader import load_dem
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def compute_roughness(elevation, window_size=3):
     """
@@ -16,7 +19,9 @@ def compute_roughness(elevation, window_size=3):
 
 
 
-def save_roughness(roughness, meta, out_path="../data/processed/roughness.tif"):
+def save_roughness(roughness, meta, out_path=None):
+    out_path = Path(out_path) if out_path else PROJECT_ROOT / "data" / "processed" / "roughness.tif"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     meta_out = meta.copy()
     meta_out.update(dtype="float32", count=1, nodata=np.nan)
 
@@ -27,7 +32,7 @@ def save_roughness(roughness, meta, out_path="../data/processed/roughness.tif"):
 
 
 if __name__ == "__main__":
-    elevation, meta, pixel_size = load_dem()
+    elevation, meta, pixel_size = load_dem(max_size=1024)
     roughness = compute_roughness(elevation, window_size=3)
     save_roughness(roughness, meta)
 

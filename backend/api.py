@@ -50,6 +50,7 @@ except ImportError:
     try:
         from localization.localizer import get_current_position, get_rover_mode
         def get_reasoning(): return "System active. Streaming live telemetry."
+        def get_navigation_state(): return {}
         HAS_LOCALIZER = True
     except ImportError:
         HAS_LOCALIZER = False
@@ -74,11 +75,36 @@ except ImportError as e:
     print(f"⚠️ Warning: terrain dem_loader could not be imported: {e}")
     HAS_DEM_LOADER = False
 
-# In-memory cache for the decimated heightmap payload - loading the
-# full-resolution DEM GeoTIFF is expensive (main.py's own comment calls it
-# "this will take a while"), so we only ever do it once per grid_size.
+# In-memory cache: evaluation metrics (expensive to compute, computed once).
 _terrain_cache = {}
 _evaluation_metrics = None
+
+# The TIFF is a polar-stereographic projection centred at the lunar south pole.
+# Its affine transform maps pixel (col, row) → (easting, northing) in metres.
+# Origin in the DEM's own coordinate system:
+#   col=0, row=0  →  x = -304000 m,  y = +304000 m
+# The simulation uses a local frame where (0, 0) is the DEM centre, i.e.:
+#   local_x = easting  - 0   (easting is already centred at 0)
+#   local_y = northing - 0   (northing is already centred at 0)
+# The backend previously subtracted frame_x/frame_y which are exactly 0 for
+# this TIFF, so local coords == DEM coords.  The rover starts at (0,0) m and
+# travels only ~500 m, so we must serve a small LOCAL window of the DEM rather
+# than the full 608 km tile — otherwise the rover is a sub-pixel speck.
+
+# Pixel size of the TIFF (set once on first open, reused everywhere).
+_DEM_PIXEL_SIZE_M = 20.0   # metres per pixel (confirmed from rasterio.res)
+_DEM_HALF_EXTENT  = 304000  # half the full tile width in metres
+
+
+def _world_to_pixel(world_x_m, world_y_m):
+    """Convert local-frame metres to pixel (col, row) in the full TIFF."""
+    # DEM easting  = world_x_m  (already centred)
+    # DEM northing = world_y_m
+    # Transform: col = (easting - left) / pixel_size
+    #            row = (top - northing) / pixel_size
+    col = int((world_x_m - (-_DEM_HALF_EXTENT)) / _DEM_PIXEL_SIZE_M)
+    row = int(((_DEM_HALF_EXTENT) - world_y_m)  / _DEM_PIXEL_SIZE_M)
+    return col, row
 
 
 def _get_evaluation_metrics():
@@ -113,82 +139,131 @@ def _get_evaluation_metrics():
     return _evaluation_metrics
 
 
-def _build_heightmap_payload(grid_size=128):
-    if grid_size in _terrain_cache:
-        return _terrain_cache[grid_size]
+def _build_local_tile(
+    centre_x_m: float,
+    centre_y_m: float,
+    half_extent_m: float = 4000.0,
+    grid_size: int = 256,
+):
+    """
+    Read a square window of the DEM centred on (centre_x_m, centre_y_m) in
+    the simulation's local metre frame, resample it to grid_size × grid_size
+    cells, and return a payload dict the Three.js frontend can consume directly.
+
+    half_extent_m controls the physical size of the patch shown:
+      4000 m  →  8 km × 8 km  (good rover-scale view, craters clearly visible)
+
+    The x_coords / y_coords in the payload are in the SAME local metre frame
+    the simulator uses, so rover position (x, y) maps directly onto the mesh.
+    """
+    centre_col, centre_row = _world_to_pixel(centre_x_m, centre_y_m)
+    half_px = int(half_extent_m / _DEM_PIXEL_SIZE_M)
 
     with rasterio.open(DEM_PATH) as source:
-        output_rows = min(grid_size, source.height)
-        output_cols = min(grid_size, source.width)
-        dem_map = source.read(
-            1,
-            out_shape=(output_rows, output_cols),
-            resampling=Resampling.average,
-        ).astype(np.float32)
-        dem_meta = source.meta.copy()
-        dem_meta["transform"] = source.transform * source.transform.scale(
-            source.width / output_cols,
-            source.height / output_rows,
-        )
+        total_rows, total_cols = source.height, source.width
         nodata = source.nodata
 
+        # Clamp window to DEM bounds
+        col_off = max(0, centre_col - half_px)
+        row_off = max(0, centre_row - half_px)
+        col_end = min(total_cols, centre_col + half_px)
+        row_end = min(total_rows, centre_row + half_px)
+        win_width  = col_end - col_off
+        win_height = row_end - row_off
+
+        if win_width <= 0 or win_height <= 0:
+            raise ValueError(
+                f"Rover position ({centre_x_m}, {centre_y_m}) m is outside the DEM bounds."
+            )
+
+        window = rasterio.windows.Window(col_off, row_off, win_width, win_height)
+
+        # Resample directly to grid_size while reading — avoids loading the
+        # full window at native 20m resolution into memory first.
+        out_rows = min(grid_size, win_height)
+        out_cols = min(grid_size, win_width)
+        patch = source.read(
+            1,
+            window=window,
+            out_shape=(out_rows, out_cols),
+            resampling=Resampling.bilinear,
+        ).astype(np.float32)
+
+    # Mask nodata
     if nodata is not None:
-        dem_map[dem_map == nodata] = np.nan
-    transform = dem_meta["transform"]
-    h, w = dem_map.shape
+        patch[patch == nodata] = np.nan
+    if np.isnan(patch).any():
+        patch = np.nan_to_num(patch, nan=float(np.nanmean(patch)))
 
-    # Decimate down to ~grid_size cells per side for a WebGL-friendly mesh
-    # (the raw DEM is far too dense to hand a browser directly).
-    step_r = max(1, h // grid_size)
-    step_c = max(1, w // grid_size)
-    decimated = dem_map[::step_r, ::step_c]
+    rows_out, cols_out = patch.shape
 
-    if np.isnan(decimated).any():
-        fill_val = float(np.nanmean(dem_map))
-        decimated = np.nan_to_num(decimated, nan=fill_val)
+    # Build world coordinates for each output cell.
+    # Each output col maps back to a source pixel col:
+    #   src_col = col_off + c * (win_width / cols_out)
+    # Then to world metres:
+    #   world_x = src_col * pixel_size + left_edge
+    left_edge  = -_DEM_HALF_EXTENT   # world x at col 0
+    top_edge   =  _DEM_HALF_EXTENT   # world y at row 0
 
-    rows, cols = decimated.shape
-    # Real-world coordinates for each grid row/column, via the DEM's own
-    # affine transform - same approach simulation/main.py's
-    # downsampled_path_to_world() uses, so this lines up with the same
-    # world frame the rover's telemetry x/y are already in.
-    raw_x_coords = [float((transform * (c * step_c, 0))[0]) for c in range(cols)]
-    raw_y_coords = [float((transform * (0, r * step_r))[1]) for r in range(rows)]
-    # The simulator and telemetry use a local frame centered on the DEM.
-    # Keep the browser mesh in that same frame; otherwise the rover at (0, 0)
-    # is hundreds of kilometres away from the TIFF vertices.
-    frame_x = (raw_x_coords[0] + raw_x_coords[-1]) / 2
-    frame_y = (raw_y_coords[0] + raw_y_coords[-1]) / 2
-    x_coords = [x - frame_x for x in raw_x_coords]
-    y_coords = [y - frame_y for y in raw_y_coords]
+    x_coords = [
+        left_edge + (col_off + c * (win_width / cols_out)) * _DEM_PIXEL_SIZE_M
+        for c in range(cols_out)
+    ]
+    y_coords = [
+        top_edge  - (row_off + r * (win_height / rows_out)) * _DEM_PIXEL_SIZE_M
+        for r in range(rows_out)
+    ]
 
-    payload = {
-        "rows": rows,
-        "cols": cols,
+    return {
+        "rows": rows_out,
+        "cols": cols_out,
         "x_coords": x_coords,
         "y_coords": y_coords,
-        "elevation": decimated.astype(float).tolist(),
-        "source": "data/Lunar_Map.tiff (real DEM, decimated for the 3D view)",
+        "elevation": patch.astype(float).tolist(),
+        "centre_x": centre_x_m,
+        "centre_y": centre_y_m,
+        "half_extent_m": half_extent_m,
+        "source": "data/Lunar_Map.tiff (rover-local window, real LOLA DEM)",
     }
-    _terrain_cache[grid_size] = payload
-    return payload
 
 
 # --- All routes are attached to the single 'app' instance ---
 
 @app.get("/terrain-heightmap")
-def get_terrain_heightmap(grid_size: int = 128):
+def get_terrain_heightmap(
+    grid_size: int = 256,
+    cx: float = 0.0,
+    cy: float = 0.0,
+    half_extent_m: float = 4000.0,
+):
     """
-    Serve a decimated version of the real DEM (terrain/dem_loader.py, the
-    same GeoTIFF the planner and localizer already use) as a heightmap grid
-    for the dashboard's 3D terrain view. Cached in memory after first build.
+    Return a rover-local window of the real LOLA DEM as a heightmap grid.
+
+    Parameters
+    ----------
+    cx, cy          Rover centre in local-frame metres (same frame the simulator
+                    uses; starts near 0,0 and grows as the rover moves).
+    half_extent_m   Half-width of the patch in metres.  Default 4000 gives an
+                    8 km × 8 km window — large enough to show several craters
+                    while keeping the rover clearly visible.
+    grid_size       Number of cells per side in the output mesh (capped 32–512).
     """
     if not HAS_DEM_LOADER:
         return {"error": "DEM loader module not available"}
 
-    grid_size = max(16, min(grid_size, 512))
+    grid_size = max(32, min(grid_size, 512))
+    half_extent_m = max(500.0, min(half_extent_m, 50000.0))
+
+    # Cache key includes the rounded-to-100m centre so a barely-moving rover
+    # reuses the same tile instead of re-reading the TIFF every second.
+    cache_key = (round(cx / 100) * 100, round(cy / 100) * 100, int(half_extent_m), grid_size)
+    if cache_key in _terrain_cache:
+        return _terrain_cache[cache_key]
+
     try:
-        return _build_heightmap_payload(grid_size)
+        payload = _build_local_tile(cx, cy, half_extent_m, grid_size)
+        _terrain_cache[cache_key] = payload
+        return payload
     except Exception as e:
         print("Terrain heightmap build error:", e)
         return {"error": str(e)}
@@ -223,7 +298,7 @@ def get_audit_log(limit: int = 20):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    print("🟢 Frontend Dashboard Connected!")
+    print("[WS] Frontend Dashboard Connected!")
     
     try:
         while True:
@@ -264,15 +339,22 @@ async def websocket_endpoint(websocket: WebSocket):
                 "reasoning": current_reasoning,
                 "precision": precision,
                 "recall": recall,
-                "center_error": center_error
+                "center_error": center_error,
+                "trn_enabled": True,
+                "error_before": 0.0,
+                "error_after": 0.0,
+                "last_error_before": 0.0,
+                "last_error_after": 0.0,
+                "reloc_count": 0,
+                "hazard_violation_pct": 0.0,
             }
             live_packet.update(navigation_state)
             
             # Send through the WebSocket tunnel to the UI
             await websocket.send_text(json.dumps(live_packet))
             
-            # Stream data every 1 second
-            await asyncio.sleep(1)
+            # Stream data at 5 Hz (every 0.20s) for responsive real-time animation
+            await asyncio.sleep(0.20)
             
     except (WebSocketDisconnect, ConnectionResetError, RuntimeError, OSError):
-        print("🔴 Frontend Dashboard Disconnected.")
+        print("[WS] Frontend Dashboard Disconnected.")

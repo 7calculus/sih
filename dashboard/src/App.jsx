@@ -80,7 +80,7 @@ const MIN_WINDOW_M = 60;   // smallest camera window, in meters, so a barely-mov
 const EDGE_MARGIN_FRAC = 0.25; // re-expand once the rover is within 25% of an edge
 const GROWTH_FACTOR = 1.8;     // how much bigger the new window is when we do expand
 
-const RoverMap = ({ trail, position, uncertainty, mode, pathA, pathB, activePath, hazards, scanState }) => {
+const RoverMap = ({ trail, position, uncertainty, mode, pathA, pathB, activePath, hazardPath, pathChoice, hazards, scanState, routePhase }) => {
   // Sticky chase-camera: re-fitting to the *entire* trail every frame was
   // the bug here. Because the current position is always at (or near) the
   // extreme edge of everything recorded so far during steady motion, a
@@ -148,12 +148,28 @@ const RoverMap = ({ trail, position, uncertainty, mode, pathA, pathB, activePath
   const pathAPts = pathA.map(p => toSvg(p[0], p[1]));
   const pathBPts = pathB.map(p => toSvg(p[0], p[1]));
   const activePathPts = activePath.map(p => toSvg(p[0], p[1]));
+  const hazardPathPts = (hazardPath || []).map(p => toSvg(p[0], p[1]));
   const hazardPts = hazards.map(hazard => toSvg(hazard.x, hazard.y));
   const roverPt = toSvg(position.x, position.y);
   const uncertaintyPx = Math.max(uncertainty * scale, 3);
 
   const gridLines = [...Array(9)].map((_, i) => (i + 1) * (VIEW / 10));
-  const modeColor = scanState === 'hazard' ? '#ef4444' : scanState === 'scanning' ? '#38bdf8' : '#22c55e';
+
+  // Mode colors (PRD Table 11 + Hazard Detected)
+  const modeColor = (() => {
+    const m = (mode || '').toLowerCase();
+    if (m.includes('hazard') || m.includes('relocal')) return '#ef4444';
+    if (m.includes('caution')) return '#facc15';
+    if (m.includes('complete')) return '#22c55e';
+    return '#22d3ee'; // Driving / Starting / cyan cruise
+  })();
+
+  // Path drama colors driven by route_phase
+  // cyan -> hazard(red blocked) -> candidates(purple/yellow) -> green -> cyan
+  const phase = routePhase || (scanState === 'hazard' ? 'hazard' : 'cyan');
+  const pathAColor = '#c084fc'; // neon purple
+  const pathBColor = '#facc15'; // bright yellow
+  const isEvaluating = phase === 'candidates' || phase === 'hazard';
 
   return (
     <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className="w-full h-full">
@@ -165,28 +181,79 @@ const RoverMap = ({ trail, position, uncertainty, mode, pathA, pathB, activePath
         </React.Fragment>
       ))}
 
-      {/* travelled path */}
-      {activePathPts.length > 1 && (
-        <polyline points={activePathPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#22d3ee" strokeOpacity="0.35" strokeWidth="2" />
+      {/* Red blocked path to hazard */}
+      {hazardPathPts.length > 1 && (
+        <polyline
+          points={hazardPathPts.map(p => `${p.sx},${p.sy}`).join(' ')}
+          fill="none"
+          stroke="#ef4444"
+          strokeOpacity="1"
+          strokeWidth="4"
+          strokeDasharray="4 2"
+        />
       )}
-      {pathBPts.length > 1 && (
-        <polyline points={pathBPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#f97316" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="5 4" />
-      )}
+
+      {/* Candidate Path A (Neon Purple - Safe Route) */}
       {pathAPts.length > 1 && (
-        <polyline points={pathAPts.map(p => `${p.sx},${p.sy}`).join(' ')} fill="none" stroke="#a78bfa" strokeOpacity="0.9" strokeWidth="2" strokeDasharray="2 3" />
+        <polyline
+          points={pathAPts.map(p => `${p.sx},${p.sy}`).join(' ')}
+          fill="none"
+          stroke={pathAColor}
+          strokeOpacity={phase === 'green' && pathChoice !== 'A' ? 0.35 : 0.95}
+          strokeWidth={isEvaluating ? '4' : '2.5'}
+          strokeDasharray={isEvaluating ? '5 3' : '3 3'}
+        />
       )}
-      {hazardPts.map((point, index) => (
-        <g key={`hazard-${index}`}>
-          <circle cx={point.sx} cy={point.sy} r="8" fill="#ef4444" fillOpacity="0.25" stroke="#ef4444" strokeWidth="2" />
-          <path d={`M ${point.sx - 4} ${point.sy - 4} L ${point.sx + 4} ${point.sy + 4} M ${point.sx + 4} ${point.sy - 4} L ${point.sx - 4} ${point.sy + 4}`} stroke="#fecaca" strokeWidth="2" />
-        </g>
-      ))}
+
+      {/* Candidate Path B (Bright Yellow - Fast Shortcut) */}
+      {pathBPts.length > 1 && (
+        <polyline
+          points={pathBPts.map(p => `${p.sx},${p.sy}`).join(' ')}
+          fill="none"
+          stroke={pathBColor}
+          strokeOpacity={phase === 'green' && pathChoice !== 'B' ? 0.35 : 0.95}
+          strokeWidth={isEvaluating ? '4' : '2.5'}
+          strokeDasharray={isEvaluating ? '5 3' : '3 3'}
+        />
+      )}
+
+      {/* Active cruise (cyan) or Selected Winner (green) */}
+      {!isEvaluating && activePathPts.length > 1 && (
+        <polyline
+          points={activePathPts.map(p => `${p.sx},${p.sy}`).join(' ')}
+          fill="none"
+          stroke={phase === 'green' ? '#22c55e' : '#22d3ee'}
+          strokeOpacity="0.9"
+          strokeWidth={phase === 'green' ? '4.5' : '3'}
+        />
+      )}
+
+      {/* Route Legend in top-left of the map */}
+      <g className="select-none pointer-events-none">
+        <rect x="8" y="8" width="128" height="40" fill="rgba(0,0,0,0.75)" stroke="rgba(255,255,255,0.2)" rx="3" />
+        <line x1="16" y1="20" x2="34" y2="20" stroke="#c084fc" strokeWidth="3" strokeDasharray="3 2" />
+        <text x="40" y="23" fill="#c084fc" fontSize="8" fontWeight="bold" letterSpacing="0.05em">PATH A (PURPLE/SAFE)</text>
+        <line x1="16" y1="34" x2="34" y2="34" stroke="#facc15" strokeWidth="3" strokeDasharray="3 2" />
+        <text x="40" y="37" fill="#facc15" fontSize="8" fontWeight="bold" letterSpacing="0.05em">PATH B (YELLOW/FAST)</text>
+      </g>
+
+      {hazardPts.map((point, index) => {
+        const hz = hazards[index] || {};
+        const isCrater = (hz.type || '') === 'crater';
+        return (
+          <g key={`hazard-${index}`}>
+            <circle cx={point.sx} cy={point.sy} r="10" fill={isCrater ? '#a855f7' : '#ef4444'} fillOpacity="0.3" stroke={isCrater ? '#e9d5ff' : '#ef4444'} strokeWidth="2" />
+            <path d={`M ${point.sx - 5} ${point.sy - 5} L ${point.sx + 5} ${point.sy + 5} M ${point.sx + 5} ${point.sy - 5} L ${point.sx - 5} ${point.sy + 5}`} stroke="#fecaca" strokeWidth="2" />
+            <text x={point.sx + 12} y={point.sy - 8} fill={isCrater ? '#e9d5ff' : '#fecaca'} fontSize="8" className="normal-case">{isCrater ? 'CRATER' : 'TERRAIN'}</text>
+          </g>
+        );
+      })}
       {trailPts.length > 1 && (
         <polyline
           points={trailPts.map(p => `${p.sx},${p.sy}`).join(' ')}
           fill="none"
           stroke="#22d3ee"
-          strokeOpacity="0.7"
+          strokeOpacity="0.55"
           strokeWidth="1.5"
         />
       )}
@@ -223,15 +290,33 @@ const AuditLogPanel = ({ entries, loading }) => {
   }
   return (
     <div className="flex flex-col gap-2 overflow-y-auto h-full pr-1">
-      {entries.map((entry, i) => (
-        <div key={i} className="border border-white/10 bg-black/50 p-2">
-          <div className="flex justify-between text-[8px] text-gray-400 tracking-widest mb-1">
-            <span>ROUTE DECISION #{entries.length - i}</span>
-            <span>{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--:--:--'}</span>
+      {entries.map((entry, i) => {
+        const ma = entry.metrics?.path_a || entry.metrics?.chosen || {};
+        const mb = entry.metrics?.path_b || entry.metrics?.rejected || {};
+        return (
+          <div key={i} className="border border-white/10 bg-black/50 p-2">
+            <div className="flex justify-between text-[8px] text-gray-400 tracking-widest mb-1">
+              <span>ROUTE DECISION #{entries.length - i}</span>
+              <span>{entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : '--:--:--'}</span>
+            </div>
+            <p className="text-[10px] text-cyan-300 leading-snug normal-case mb-2">{entry.explanation}</p>
+            <div className="grid grid-cols-2 gap-2 text-[8px] tracking-widest normal-case">
+              <div className="border border-violet-400/30 bg-violet-950/30 p-1.5">
+                <div className="text-violet-300 mb-1">PATH A</div>
+                <div className="text-white">Terrain hz: <span className="text-red-300">{ma.terrain_hazards ?? 0}</span></div>
+                <div className="text-white">Crater hz: <span className="text-purple-300">{ma.crater_hazards ?? 0}</span></div>
+                <div className="text-gray-400">Slip: {Number(ma.slip_risk ?? 0).toFixed(1)}°</div>
+              </div>
+              <div className="border border-yellow-400/30 bg-yellow-950/20 p-1.5">
+                <div className="text-yellow-300 mb-1">PATH B</div>
+                <div className="text-white">Terrain hz: <span className="text-red-300">{mb.terrain_hazards ?? 0}</span></div>
+                <div className="text-white">Crater hz: <span className="text-purple-300">{mb.crater_hazards ?? 0}</span></div>
+                <div className="text-gray-400">Slip: {Number(mb.slip_risk ?? 0).toFixed(1)}°</div>
+              </div>
+            </div>
           </div>
-          <p className="text-[10px] text-cyan-300 leading-snug normal-case">{entry.explanation}</p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };
@@ -244,9 +329,15 @@ function App() {
     uncertainty: 0.0,
     precision: 0.0,
     recall: 0.0,
-    center_error: 0.0
-    ,path_a: [], path_b: [], active_path: [], route_index: 0
-    ,hazards: [], scan_state: 'clear', path_choice: 'A'
+    center_error: 0.0,
+    trn_enabled: true,
+    last_error_before: 0.0,
+    last_error_after: 0.0,
+    reloc_count: 0,
+    hazard_violation_pct: 0.0,
+    path_a: [], path_b: [], active_path: [], hazard_path: [], route_index: 0,
+    hazards: [], scan_state: 'clear', path_choice: 'A', route_phase: 'cyan',
+    path_metrics_a: {}, path_metrics_b: {},
   });
   const [trail, setTrail] = useState([]);
   const [auditLog, setAuditLog] = useState([]);
@@ -272,9 +363,20 @@ function App() {
             uncertainty: data.uncertainty,
             precision: data.precision ?? 0.0,
             recall: data.recall ?? 0.0,
-            center_error: data.center_error ?? 0.0
-            ,path_a: data.path_a || [], path_b: data.path_b || [], active_path: data.active_path || [], route_index: data.route_index || 0
-            ,hazards: data.hazards || [], scan_state: data.scan_state || 'clear', path_choice: data.path_choice || 'A'
+            center_error: data.center_error ?? 0.0,
+            trn_enabled: data.trn_enabled ?? true,
+            last_error_before: data.last_error_before ?? data.error_before ?? 0.0,
+            last_error_after: data.last_error_after ?? data.error_after ?? 0.0,
+            reloc_count: data.reloc_count ?? 0,
+            hazard_violation_pct: data.hazard_violation_pct ?? 0.0,
+            path_a: data.path_a || [], path_b: data.path_b || [],
+            active_path: data.active_path || [], hazard_path: data.hazard_path || [],
+            route_index: data.route_index || 0,
+            hazards: data.hazards || [], scan_state: data.scan_state || 'clear',
+            path_choice: data.path_choice || 'A',
+            route_phase: data.route_phase || 'cyan',
+            path_metrics_a: data.path_metrics_a || {},
+            path_metrics_b: data.path_metrics_b || {},
           });
 
           // Accumulate position history for the trail/trajectory view.
@@ -370,7 +472,7 @@ function App() {
       </header>
 
       {/* ================= 3-COLUMN DATA PANELS ================= */}
-      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 w-full mb-6 h-[240px]">
+      <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 w-full mb-6 min-h-[300px] lg:h-[300px]">
         
         {/* 1. ROVER MODE */}
         <div className="relative bg-black/40 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between overflow-hidden">
@@ -381,27 +483,83 @@ function App() {
             {/* Moved UP: Title and Connecting/Driving Status */}
             <div>
               <div className="font-mono text-sm text-gray-200 tracking-widest mb-4">ROVER MODE</div>
-              <div className="flex items-center gap-4">
-                <div className="w-5 h-5 rounded-full bg-cyan-400 shadow-[0_0_15px_#22d3ee]"></div>
-                <div className="text-cyan-400 text-6xl drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold tracking-wide">{telemetry.mode}</div>
+              <div className="flex min-w-0 items-center gap-3">
+                <div
+                  className="h-5 w-5 shrink-0 rounded-full shadow-[0_0_15px_currentColor]"
+                  style={{
+                    backgroundColor:
+                      /hazard|relocal/i.test(telemetry.mode) ? '#ef4444' :
+                      /caution/i.test(telemetry.mode) ? '#facc15' :
+                      /complete/i.test(telemetry.mode) ? '#22c55e' :
+                      '#22d3ee',
+                    color:
+                      /hazard|relocal/i.test(telemetry.mode) ? '#ef4444' :
+                      /caution/i.test(telemetry.mode) ? '#facc15' :
+                      /complete/i.test(telemetry.mode) ? '#22c55e' :
+                      '#22d3ee',
+                  }}
+                />
+                <div
+                  className="min-w-0 break-words text-3xl xl:text-4xl font-bold tracking-wide drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]"
+                  style={{
+                    color:
+                      /hazard|relocal/i.test(telemetry.mode) ? '#ef4444' :
+                      /caution/i.test(telemetry.mode) ? '#facc15' :
+                      /complete/i.test(telemetry.mode) ? '#22c55e' :
+                      '#22d3ee',
+                  }}
+                >
+                  {telemetry.mode}
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5 text-[8px] tracking-widest">
+                {[
+                  { label: 'DRIVING', color: '#22d3ee', active: /driving|starting|connecting/i.test(telemetry.mode) },
+                  { label: 'CAUTION', color: '#facc15', active: /caution/i.test(telemetry.mode) },
+                  { label: 'RE-LOCALIZING', color: '#ef4444', active: /relocal/i.test(telemetry.mode) },
+                  { label: 'HAZARD', color: '#f87171', active: /hazard/i.test(telemetry.mode) },
+                ].map(badge => (
+                  <span
+                    key={badge.label}
+                    className="border px-2 py-0.5"
+                    style={{
+                      borderColor: badge.active ? badge.color : 'rgba(255,255,255,0.15)',
+                      color: badge.active ? badge.color : 'rgba(255,255,255,0.35)',
+                      backgroundColor: badge.active ? `${badge.color}22` : 'transparent',
+                    }}
+                  >
+                    {badge.label}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-2 text-[9px] tracking-widest text-gray-400">
+                PHASE: <span className="text-white">{(telemetry.route_phase || 'cyan').toUpperCase()}</span>
+                {' · '}CHOICE: <span className="text-white">PATH {telemetry.path_choice}</span>
               </div>
             </div>
             
             {/* CORRECTED: Spread Out Metrics across the full width */}
             <div className="w-full flex flex-col gap-1 bg-black/70 p-3 border border-white/10 mt-auto">
               <div className="flex justify-between items-end border-b border-white/20 pb-1 mb-1">
-                <span className="text-[9px] font-bold text-gray-400">DETECTION METRICS</span>
-                <span className="text-[8px] text-gray-400 tracking-widest">SUB-TELEMETRY</span>
+                <span className="text-[9px] font-bold text-gray-400">HAZARD METRICS (A vs B)</span>
+                <span className="text-[8px] text-gray-400 tracking-widest">TERRAIN / CRATER</span>
               </div>
-              <div className="flex justify-between items-center w-full">
+              <div className="grid grid-cols-2 gap-2 text-[9px]">
+                <div>
+                  <div className="text-violet-300 tracking-widest mb-0.5">PATH A</div>
+                  <div className="text-red-300">Terrain: {telemetry.path_metrics_a?.terrain_hazards ?? 0}</div>
+                  <div className="text-purple-300">Crater: {telemetry.path_metrics_a?.crater_hazards ?? 0}</div>
+                </div>
+                <div>
+                  <div className="text-yellow-300 tracking-widest mb-0.5">PATH B</div>
+                  <div className="text-red-300">Terrain: {telemetry.path_metrics_b?.terrain_hazards ?? 0}</div>
+                  <div className="text-purple-300">Crater: {telemetry.path_metrics_b?.crater_hazards ?? 0}</div>
+                </div>
+              </div>
+              <div className="flex justify-between items-center w-full mt-1 pt-1 border-t border-white/10">
                 <div className="text-[9px] text-cyan-300">PRECISION: <span className="text-white">{telemetry.precision}</span></div>
                 <div className="text-[9px] text-cyan-300">RECALL: <span className="text-white">{telemetry.recall}</span></div>
                 <div className="text-[9px] text-cyan-300">CNTR ERR: <span className="text-white">{telemetry.center_error}px</span></div>
-              </div>
-              <div className="flex items-end gap-[2px] h-4 mt-1">
-                {[...Array(20)].map((_, i) => (
-                  <div key={i} className="flex-1 bg-white/50 animate-pulse" style={{ height: `${Math.random() * 80 + 20}%`, animationDelay: `${Math.random()}s` }} />
-                ))}
               </div>
             </div>
           </div>
@@ -423,14 +581,14 @@ function App() {
             </div>
             
             {/* Moved UP: X and Y Coordinates are immediately below the top text */}
-            <div className="flex justify-around w-full mt-2">
-              <div className="text-center">
+            <div className="flex w-full min-w-0 justify-between gap-3 mt-2">
+              <div className="min-w-0 flex-1 text-center">
                 <div className="text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-4">X-COORDINATE</div>
-                <div className="text-6xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.x}</div>
+                <div className="whitespace-nowrap text-4xl xl:text-5xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold tabular-nums">{Number(telemetry.position.x).toFixed(2)}</div>
               </div>
-              <div className="text-center">
+              <div className="min-w-0 flex-1 text-center">
                 <div className="text-sm text-white/60 tracking-widest mb-2 border-b border-white/30 pb-1 px-4">Y-COORDINATE</div>
-                <div className="text-6xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold">{telemetry.position.y}</div>
+                <div className="whitespace-nowrap text-4xl xl:text-5xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] font-bold tabular-nums">{Number(telemetry.position.y).toFixed(2)}</div>
               </div>
             </div>
 
@@ -440,7 +598,7 @@ function App() {
         </div>
 
         {/* 3. UNCERTAINTY */}
-        <div className="relative bg-black/40 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between">
+        <div className="relative min-h-0 overflow-hidden bg-black/40 backdrop-blur-sm border border-white/20 p-5 flex flex-col justify-between">
           <CornerBrackets />
           
           <div className="flex justify-between items-start w-full">
@@ -460,14 +618,30 @@ function App() {
           </div>
 
           <div className="flex items-baseline gap-3 mb-2 mt-auto">
-            <span className="text-7xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] tracking-tighter font-bold">
-              {telemetry.uncertainty}
+            <span className="text-6xl xl:text-7xl text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.8)] tracking-tighter font-bold tabular-nums">
+              {Number(telemetry.uncertainty).toFixed(2)}
             </span>
             <span className="text-base text-white/60 tracking-widest">METERS</span>
           </div>
           
           <div className="text-[10px] text-gray-400 tracking-widest">
             TEST EVAL: <span className="text-cyan-400 font-bold">{telemetry.recall >= 0.80 ? 'PASSED (>= 0.80)' : 'OPTIMIZING'}</span>
+          </div>
+          <div className="mt-3 border-t border-cyan-400/30 pt-2 text-[10px] tracking-widest">
+            <div className="flex justify-between text-gray-400">
+              <span>TRN STATUS</span>
+              <span className={telemetry.trn_enabled ? 'text-cyan-300' : 'text-orange-300'}>
+                {telemetry.trn_enabled ? 'ENABLED' : 'DISABLED'}
+              </span>
+            </div>
+            <div className="flex justify-between text-gray-400 mt-1">
+              <span>LAST RE-LOCALIZATION</span>
+              <span className="text-white">{Number(telemetry.last_error_before).toFixed(2)}m <span className="text-cyan-300">→</span> {Number(telemetry.last_error_after).toFixed(2)}m</span>
+            </div>
+            <div className="flex justify-between text-gray-400 mt-1">
+              <span>CORRECTIONS</span>
+              <span className="text-white">{telemetry.reloc_count}</span>
+            </div>
           </div>
         </div>
 
@@ -483,7 +657,7 @@ function App() {
             <div className="font-mono text-sm text-gray-200 tracking-widest">LIVE POSITION MAP</div>
             <div className="flex items-center gap-3">
               <div className="text-[8px] tracking-widest text-gray-400 hidden md:block">
-                <span className="text-sky-300">SCAN</span> / <span className="text-red-400">HAZARD</span> / <span className="text-green-400">CLEAR</span>
+                <span className="text-cyan-300">CYAN</span> / <span className="text-red-400">RED HZ</span> / <span className="text-violet-300">A PURPLE</span> / <span className="text-yellow-300">B YELLOW</span> / <span className="text-green-400">GREEN</span>
               </div>
               <div className="text-[8px] text-gray-400 tracking-widest hidden md:block">TRAIL: {trail.length} PTS</div>
               <div className="flex border border-white/20 text-[9px] tracking-widest">
@@ -504,7 +678,7 @@ function App() {
           </div>
           <div className="relative flex-1 min-h-0">
             {mapMode === '2d' ? (
-              <RoverMap trail={trail} position={telemetry.position} uncertainty={telemetry.uncertainty} mode={telemetry.mode} pathA={telemetry.path_a} pathB={telemetry.path_b} activePath={telemetry.active_path} hazards={telemetry.hazards} scanState={telemetry.scan_state} />
+              <RoverMap trail={trail} position={telemetry.position} uncertainty={telemetry.uncertainty} mode={telemetry.mode} pathA={telemetry.path_a} pathB={telemetry.path_b} activePath={telemetry.active_path} hazardPath={telemetry.hazard_path} pathChoice={telemetry.path_choice} hazards={telemetry.hazards} scanState={telemetry.scan_state} routePhase={telemetry.route_phase} />
             ) : (
               <RoverTerrain3D
                 apiBase={API_BASE}
@@ -515,8 +689,11 @@ function App() {
                 pathA={telemetry.path_a}
                 pathB={telemetry.path_b}
                 activePath={telemetry.active_path}
+                hazardPath={telemetry.hazard_path}
+                pathChoice={telemetry.path_choice}
                 hazards={telemetry.hazards}
                 scanState={telemetry.scan_state}
+                routePhase={telemetry.route_phase}
               />
             )}
           </div>
